@@ -23,9 +23,22 @@ export interface InboxMessage {
   key: string
   text: string
   url: string | null
+  read: boolean
 }
 
-/** Where agents and people find the CLI and the guide, for the panel's setup section. */
+/** A point of the person's workflow that sends here, as `agent-inbox point add` recorded it. */
+export interface WiredPoint {
+  id: string
+  /** ask: it shows under Waiting on you; notify: under Messages. */
+  kind: 'ask' | 'notify'
+  /** The key it sends, or a placeholder such as <ticket> when the key varies. */
+  key: string
+  when: string
+  /** The file, script or automation that sends. */
+  wiredIn: string
+}
+
+/** Where agents and people find the CLI and the guide, for the panel's setup task. */
 export interface Setup {
   cli: string
   guide: string
@@ -35,9 +48,12 @@ export interface Setup {
 export interface Inbox {
   waiting: WaitingItem[]
   messages: InboxMessage[]
+  points: WiredPoint[]
   retentionDays: number
   language: Language
   setup: Setup
+  /** First start without a log: the setup task waits on the person until they mark it handled. */
+  setupPending: boolean
   /** Reading the board or installing the CLI failed; messages still come from the log. */
   error: string | null
 }
@@ -54,7 +70,17 @@ declare module 'orca' {
     'inbox.open': { input: { path: string; terminal: string | null }; output: ActionResult }
     /** `agent-inbox resolve`: back to the resolved column, comment cleared. */
     'inbox.resolve': { input: { path: string; key: string }; output: ActionResult }
-    'inbox.dismiss': { input: { id: string }; output: ActionResult }
+    /** Marks messages read; they move to the read history until the retention window drops them. */
+    'inbox.read': { input: { ids: string[] }; output: ActionResult }
+    /** The setup task is handled; it does not come back. */
+    'inbox.setupDone': { output: ActionResult }
+    /** Puts text on the system clipboard, which a panel cannot reach. Fails with `no-clipboard`. */
+    'inbox.copy': { input: { text: string }; output: ActionResult }
+    /**
+     * Starts Orca's default agent with the prompt in the workspace selected in Orca and shows it, for Wired
+     * points' Add a point, Align and Remove. Fails with `no-workspace` when none is selected.
+     */
+    'inbox.launch': { input: { prompt: string }; output: ActionResult }
   }
   interface PluginPanelEvents {
     /** The log or the settings changed. */

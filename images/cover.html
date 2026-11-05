@@ -1,0 +1,158 @@
+<!doctype html>
+<!--
+  The listing cover (images/cover.png, 1600×1000) and icon (images/icon.png). After a panel change, with Orca's
+  interface language set to English and its window hidden, shoot the made-up data of src/panel.check.ts:
+    orca plugin shot . --scenario cover --theme dark --width 420 --out .orca/shots/cover.png
+    orca plugin shot . --scenario cover-points --theme dark --width 420 --out .orca/shots/cover-points.png
+  then draw both images from the plugin folder:
+    chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    "$chrome" --headless --hide-scrollbars --force-device-scale-factor=1 --window-size=1600,1000 --screenshot=images/cover.png "file://$PWD/images/cover.html"
+    "$chrome" --headless --hide-scrollbars --force-device-scale-factor=1 --window-size=256,256 --default-background-color=00000000 --screenshot=images/icon.png "file://$PWD/images/icon.svg"
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    position: relative;
+    width: 1600px;
+    height: 1000px;
+    overflow: hidden;
+    background: #0a0a0d;
+    color: #f4f4f5;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", Inter, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .glow {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(900px 640px at 82% 6%, rgba(109, 99, 255, 0.24), transparent 62%),
+      radial-gradient(760px 520px at -4% 104%, rgba(251, 191, 36, 0.09), transparent 60%);
+  }
+  .dots {
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+    background-size: 26px 26px;
+    -webkit-mask-image: linear-gradient(100deg, #000 0%, rgba(0, 0, 0, 0.35) 55%, transparent 80%);
+  }
+
+  .pitch { position: absolute; left: 96px; top: 196px; width: 500px; }
+  .eyebrow { font-size: 15px; font-weight: 700; letter-spacing: 0.3em; color: #a5b4fc; }
+  .brand { display: flex; align-items: center; gap: 20px; margin-top: 22px; }
+  .brand img { width: 76px; height: 76px; }
+  .brand h1 { margin: 0; font-size: 68px; font-weight: 800; letter-spacing: -0.035em; line-height: 1; }
+  .tagline { margin: 26px 0 0; font-size: 26px; line-height: 1.38; color: #d4d4d8; letter-spacing: -0.01em; }
+
+  .features { margin: 40px 0 0; padding: 0; list-style: none; display: grid; gap: 20px; }
+  .features li { display: flex; gap: 16px; align-items: flex-start; }
+  .features .tile {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: rgba(129, 140, 248, 0.12);
+    border: 1px solid rgba(165, 180, 252, 0.18);
+  }
+  .features svg { width: 19px; height: 19px; fill: none; stroke: #c7d2fe; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .features b { display: block; font-size: 18px; font-weight: 600; color: #fafafa; }
+  .features span { display: block; margin-top: 3px; font-size: 16px; line-height: 1.4; color: #a1a1aa; }
+
+  .cli {
+    display: inline-block;
+    margin-top: 40px;
+    padding: 14px 18px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font: 14px/1.4 "SF Mono", Menlo, monospace;
+    color: #e4e4e7;
+    white-space: nowrap;
+  }
+  .cli .prompt { color: #71717a; }
+  .cli .str { color: #fcd34d; }
+
+  .panel {
+    position: absolute;
+    width: 422px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #171717;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 40px 90px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(0, 0, 0, 0.5);
+  }
+  .panel header {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 44px;
+    padding: 0 16px;
+    background: #1c1c1c;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 14px;
+    font-weight: 600;
+    color: #e5e5e5;
+  }
+  .panel header svg { width: 16px; height: 16px; fill: none; stroke: #d4d4d4; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .shot { position: relative; width: 420px; background-repeat: no-repeat; }
+  /* a panel taller than the window shows its scrollbar */
+  .inbox .shot::before { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 10px; background: #171717; }
+  .shot.fade::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 110px;
+    background: linear-gradient(rgba(23, 23, 23, 0), #171717 85%);
+  }
+  /* the refresh row of the panel is left out: the header names it */
+  .inbox { left: 636px; top: 64px; }
+  .inbox .shot { height: 836px; background-image: url("../.orca/shots/cover.png"); background-position: 0 -48px; }
+  .points { left: 1098px; top: 196px; }
+  .points .shot { height: 562px; background-image: url("../.orca/shots/cover-points.png"); background-position: 0 -388px; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="dots"></div>
+
+  <section class="pitch">
+    <div class="eyebrow">ORCA PLUGIN</div>
+    <div class="brand">
+      <img src="icon.svg" alt="">
+      <h1>Agent Inbox</h1>
+    </div>
+    <p class="tagline">Everything your agents and scripts wait on you for, in one sidebar panel.</p>
+    <ul class="features">
+      <li>
+        <div class="tile"><svg viewBox="0 0 24 24"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg></div>
+        <div><b>Waiting on you</b><span>Decisions and approvals, by project. One click back to the agent that asked.</span></div>
+      </li>
+      <li>
+        <div class="tile"><svg viewBox="0 0 24 24"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></div>
+        <div><b>Messages</b><span>Failed jobs, expiring credentials, finished reports, kept for the days you choose.</span></div>
+      </li>
+      <li>
+        <div class="tile"><svg viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></div>
+        <div><b>Wired points</b><span>Every point of your workflow that sends here. An agent wires a new one for you.</span></div>
+      </li>
+    </ul>
+    <div class="cli"><span class="prompt">$</span> agent-inbox ask PAY-2318 <span class="str">"OK to run it on staging?"</span></div>
+  </section>
+
+  <div class="panel inbox">
+    <header><svg viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>Agent Inbox</header>
+    <div class="shot fade"></div>
+  </div>
+  <div class="panel points">
+    <header><svg viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>Agent Inbox</header>
+    <div class="shot"></div>
+  </div>
+</body>
+</html>

@@ -74,8 +74,8 @@ export function keepLines(lines: string[], now: number, retentionDays: number): 
 
 export const messageId = (entry: Entry) => `${entry.at}|${entry.key}|${entry.message}`
 
-/** Notify entries inside the retention window, newest first, without the dismissed ones. */
-export function recentMessages(entries: Entry[], now: number, retentionDays: number, dismissed: Set<string>): Entry[] {
+/** Notify entries inside the retention window, newest first. */
+export function recentMessages(entries: Entry[], now: number, retentionDays: number): Entry[] {
   const from = now - retentionDays * DAY
-  return entries.filter((e) => e.kind === 'notify' && e.at >= from && !dismissed.has(messageId(e))).reverse()
+  return entries.filter((e) => e.kind === 'notify' && e.at >= from).reverse()
 }

@@ -6,6 +6,16 @@
   "version": "0.1.0",
   "description": "What your agents and scripts wait on you for, in one sidebar panel: workspaces they parked on the board with the reason, and the messages they sent. They call one CLI at the points of your workflow that need you.",
   "license": "MIT",
+  "author": {
+    "name": "Felix Li",
+    "url": "https://github.com/felix-lj-ct"
+  },
+  "repository": "https://github.com/felix-lj-ct/orca-agent-inbox",
+  "icon": "images/icon.png",
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "The Agent Inbox panel: three asks waiting on you grouped by project, unread messages, and the wired points of a workflow."
+  },
   "engines": {
     "orca": ">=1.4.248"
   },
@@ -22,30 +32,11 @@
         "ui": "components"
       }
     ],
-    "events": [
-      {
-        "on": "agent.status.changed"
-      },
-      {
-        "on": "workspace.created"
-      },
-      {
-        "on": "workspace.removed"
-      }
-    ],
-    "statusBarItems": [
-      {
-        "id": "waiting",
-        "icon": "bell",
-        "tone": "warning",
-        "tooltip": "Agent Inbox: workspaces waiting on you"
-      }
-    ],
     "settings": [
       {
         "key": "logPath",
         "title": "Log file",
-        "description": "Where the agent-inbox CLI writes messages and the panel reads them. ~ is your home folder. The CLI follows a change on its next call; a new path starts a new log and leaves the old file where it is.",
+        "description": "Where the agent-inbox CLI writes messages and the panel reads them. ~ is your home folder. The CLI follows a change once the panel has opened since; a new path starts a new log and a new list of wired points, and leaves the old files where they are. Setup: agents and scripts call ~/.config/agent-inbox/bin/agent-inbox. To wire your workflow, give your agent this prompt: Read ~/.config/agent-inbox/agent-guide.md, go through my workflow, and tell me where to send Agent Inbox messages and how to wire each one. Later, to wire a new workflow, give the same prompt with that workflow's name in place of \"my workflow\": the agent keeps what is already wired and covers only the new one.",
         "type": "string",
         "default": "~/.local/state/agent-inbox/inbox.jsonl",
         "maxLength": 1024
@@ -101,12 +92,6 @@
     },
     {
       "kind": "settings:own"
-    },
-    {
-      "kind": "workspace:read"
-    },
-    {
-      "kind": "agent:read"
     }
   ]
 }

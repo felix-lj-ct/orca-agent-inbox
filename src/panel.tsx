@@ -2,6 +2,7 @@
 import {
   atom,
   Badge,
+  Box,
   Button,
   Callout,
   Card,
@@ -9,11 +10,9 @@ import {
   Collapsible,
   EmptyState,
   env,
-  Heading,
   IconButton,
   KeyValue,
   Link,
-  on,
   plugin,
   read,
   RelativeTime,
@@ -23,17 +22,26 @@ import {
   shell,
   Spinner,
   Stack,
+  Tab,
+  Tabs,
   Text,
   type PanelContext
 } from 'orca'
 import { strings } from './i18n'
-import type { ActionResult, Inbox, InboxMessage, WaitingItem } from './protocol'
+import type { ActionResult, Inbox, InboxMessage, Setup, WaitingItem, WiredPoint } from './protocol'
 
 const REFRESH_MS = 60_000
+/** Messages shown at first in each list, and how many more each Show more adds. */
+const MESSAGE_PAGE = 20
 
 const inbox = atom<Inbox | null>(null)
 /** The last failed request or action, shown until the next one succeeds. */
 const failure = atom<string | null>(null)
+const shownMessages = { unread: atom(MESSAGE_PAGE), history: atom(MESSAGE_PAGE) }
+/** The setup prompt is on the clipboard. */
+const copied = atom(false)
+/** Wired points stay open or closed as the person left them; a run ends whenever another sidebar tab shows. */
+const pointsOpen = atom('pointsOpen', false, { persist: 'plugin' })
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const t = () => strings(read(inbox)?.language ?? 'auto', env.locale)
@@ -47,21 +55,35 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function act(request: Promise<ActionResult>, then?: () => Promise<void>): Promise<void> {
+/** Runs an action, shows why it failed, and says whether it worked. */
+async function act(request: Promise<ActionResult>, then?: () => Promise<void>): Promise<boolean> {
+  let ok = false
   try {
     const result = await request
-    const error = result.error === 'no-terminal' ? t().noTerminal : (result.error ?? t().actionFailed)
-    set(failure, result.ok ? null : error)
+    const s = t()
+    const known: Record<string, string> = { 'no-terminal': s.noTerminal, 'no-clipboard': s.noClipboard, 'no-workspace': s.noWorkspace }
+    const error = (result.error !== undefined ? known[result.error] : undefined) ?? result.error ?? s.actionFailed
+    ok = result.ok
+    set(failure, ok ? null : error)
   } catch (e) {
     set(failure, errorText(e))
   }
   if (then) await then()
+  return ok
 }
 
 const goTo = (w: WaitingItem) => act(plugin.request('inbox.open', { path: w.path, terminal: w.terminal }))
 const resolve = (w: WaitingItem) => act(plugin.request('inbox.resolve', { path: w.path, key: w.key }), refresh)
-const dismiss = (m: InboxMessage) => act(plugin.request('inbox.dismiss', { id: m.id }), refresh)
+const markRead = (messages: InboxMessage[]) => act(plugin.request('inbox.read', { ids: messages.map((m) => m.id) }), refresh)
 const openLink = (url: string) => void shell.openExternal(url)
+const openMessage = (m: InboxMessage) => {
+  openLink(m.url as string)
+  if (!m.read) void markRead([m])
+}
+const copy = async (text: string) => set(copied, await act(plugin.request('inbox.copy', { text })))
+const finishSetup = () => act(plugin.request('inbox.setupDone'), refresh)
+/** The agent opens focused in the selected workspace; the points list follows its `point add` or `point remove`. */
+const launch = (prompt: string) => act(plugin.request('inbox.launch', { prompt }))
 
 export function setup(ctx: PanelContext): void {
   void refresh()
@@ -70,15 +92,9 @@ export function setup(ctx: PanelContext): void {
     clearTimeout(pending)
     pending = setTimeout(() => void refresh(), 1_000)
   }
-  // the worker posts when the log or the settings change; agents stopping and workspaces coming or going
-  // change the board
-  ctx.subscriptions.push(
-    plugin.on('inbox.changed', soon),
-    on('agent.status.changed', soon),
-    on('workspace.created', soon),
-    on('workspace.removed', soon)
-  )
-  // a card dragged on the board by hand sends no event
+  // the worker posts when the log or the settings change
+  ctx.subscriptions.push(plugin.on('inbox.changed', soon))
+  // the board sends no event: a card dragged by hand, a workspace removed
   const timer = setInterval(() => {
     if (read(ctx.visible)) void refresh()
   }, REFRESH_MS)
@@ -88,71 +104,218 @@ export function setup(ctx: PanelContext): void {
   })
 }
 
-function waitingCard(w: WaitingItem) {
+/**
+ * One ask as a bordered tile: what and when, the reason, then the actions with their names on them,
+ * Go to agent filled as the one to take. The project shows in the group around it.
+ */
+function waitingItem(w: WaitingItem) {
   const s = t()
   return (
-    <Card title={w.key} description={w.repo}>
-      <Stack gap="sm">
-        <Text>{w.reason ?? s.noReason}</Text>
+    <Box border="neutral" radius="md" paddingX="md" paddingY="sm" gap="sm">
+      <Row justify="between" align="start" gap="sm">
+        <Text size="sm" weight="semibold">
+          {w.key}
+        </Text>
         {w.since !== null && (
           <Text muted size="xs">
-            {s.askedAt} <RelativeTime at={w.since} />
+            <RelativeTime at={w.since} />
           </Text>
         )}
-        <Row gap="xs">
-          <Button size="sm" icon="terminal" onPress={() => goTo(w)} tooltip={s.goToTip}>
-            {s.goTo}
-          </Button>
-          <Button size="sm" variant="ghost" icon="check" onPress={() => resolve(w)} tooltip={s.resolveTip}>
-            {s.resolve}
-          </Button>
-          {w.url !== null && <Link onPress={() => openLink(w.url as string)}>{s.openLink}</Link>}
-        </Row>
-      </Stack>
-    </Card>
+      </Row>
+      <Text size="sm">{w.reason ?? s.noReason}</Text>
+      <Row gap="xs" align="center" wrap>
+        <Button size="sm" variant="solid" tone="accent" icon="terminal" tooltip={s.goToTip} onPress={() => goTo(w)}>
+          {s.goTo}
+        </Button>
+        <Button size="sm" variant="outline" icon="check" tooltip={s.resolveTip} onPress={() => resolve(w)}>
+          {s.resolve}
+        </Button>
+        {w.url !== null && <Link onPress={() => openLink(w.url as string)}>{s.openLink}</Link>}
+      </Row>
+    </Box>
   )
 }
 
+/** The waiting items by project; the group with the newest ask first, as the items come. */
+function byProject(items: WaitingItem[]): { repo: string; items: WaitingItem[] }[] {
+  const groups = new Map<string, WaitingItem[]>()
+  for (const w of items) groups.set(w.repo, [...(groups.get(w.repo) ?? []), w])
+  return [...groups].map(([repo, items]) => ({ repo, items }))
+}
+
+function projectGroup(group: { repo: string; items: WaitingItem[] }) {
+  const s = t()
+  return (
+    <Collapsible key={`repo:${group.repo}`} title={s.project(group.repo || s.noProject, group.items.length)} defaultOpen>
+      <Stack gap="sm">{group.items.map(waitingItem)}</Stack>
+    </Collapsible>
+  )
+}
+
+/** Unread: the key in bold and a Mark read button; read: the whole line muted. */
 function messageRow(m: InboxMessage) {
   const s = t()
   return (
     <Stack gap="xs">
-      <Row justify="between" align="start" gap="xs">
-        <Text size="sm">
-          <Text size="sm" weight="semibold">
-            {m.key}
-          </Text>{' '}
-          {m.text}
-        </Text>
-        <IconButton icon="close" label={s.hide} size="xs" variant="ghost" onPress={() => dismiss(m)} />
-      </Row>
-      <Row gap="sm" align="center">
-        <Text muted size="xs">
-          <RelativeTime at={m.at} />
-        </Text>
-        {m.url !== null && <Link onPress={() => openLink(m.url as string)}>{s.openLink}</Link>}
+      <Text size="sm" muted={m.read}>
+        <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
+          {m.key}
+        </Text>{' '}
+        {m.text}
+      </Text>
+      <Row justify="between" align="center" gap="sm">
+        <Row gap="sm" align="center">
+          <Text muted size="xs">
+            <RelativeTime at={m.at} />
+          </Text>
+          {m.url !== null && <Link onPress={() => openMessage(m)}>{s.openLink}</Link>}
+        </Row>
+        {!m.read && (
+          <Button size="xs" variant="outline" icon="check" onPress={() => markRead([m])}>
+            {s.markRead}
+          </Button>
+        )}
       </Row>
     </Stack>
   )
 }
 
-function setupSection(data: Inbox) {
+function messageList(messages: InboxMessage[], list: keyof typeof shownMessages) {
   const s = t()
-  const empty = data.waiting.length === 0 && data.messages.length === 0
+  const shown = read(shownMessages[list])
+  const rest = messages.length - shown
   return (
-    <Collapsible title={s.setup} description={s.setupDescription} defaultOpen={empty}>
-      <Stack gap="sm">
-        <Text size="sm">{s.setupBody}</Text>
-        <Code block>{s.setupPrompt(data.setup.guide)}</Code>
-        <KeyValue
-          items={[
-            { label: s.cli, value: data.setup.cli, code: true },
-            { label: s.guide, value: data.setup.guide, code: true },
-            { label: s.log, value: data.setup.log, code: true }
-          ]}
-        />
+    <Stack gap="md">
+      {messages.slice(0, shown).map(messageRow)}
+      {rest > 0 && (
+        <Button size="sm" variant="ghost" onPress={() => set(shownMessages[list], shown + MESSAGE_PAGE)}>
+          {s.showMore(rest)}
+        </Button>
+      )}
+    </Stack>
+  )
+}
+
+/** Unread and Read tabs; Mark all read sits over the unread ones. */
+function messagesSection(messages: InboxMessage[], retentionDays: number) {
+  const s = t()
+  const unread = messages.filter((m) => !m.read)
+  const history = messages.filter((m) => m.read)
+  return (
+    <Collapsible title={s.messages(unread.length)} description={s.lastDays(retentionDays)} defaultOpen>
+      <Tabs label={s.messagesTabs} defaultValue="unread">
+        <Tab value="unread" label={s.unreadTab(unread.length)}>
+          {unread.length === 0 ? (
+            <Text muted size="sm">
+              {s.noUnread}
+            </Text>
+          ) : (
+            <Stack gap="md">
+              <Row justify="end">
+                <Button size="sm" variant="outline" icon="check" onPress={() => markRead(unread)}>
+                  {s.markAllRead}
+                </Button>
+              </Row>
+              {messageList(unread, 'unread')}
+            </Stack>
+          )}
+        </Tab>
+        <Tab value="read" label={s.readTab(history.length)}>
+          {history.length === 0 ? (
+            <Text muted size="sm">
+              {s.noRead}
+            </Text>
+          ) : (
+            messageList(history, 'history')
+          )}
+        </Tab>
+      </Tabs>
+    </Collapsible>
+  )
+}
+
+/** Where the point shows as a badge, then when it sends; under it the key, the place that sends, and Remove. */
+function pointRow(p: WiredPoint, guide: string) {
+  const s = t()
+  return (
+    <Stack gap="xs">
+      <Row gap="sm" align="center">
+        <Badge tone={p.kind === 'ask' ? 'accent' : 'neutral'}>{s.pointKind(p.kind)}</Badge>
+        <Text size="sm">{p.when}</Text>
+      </Row>
+      <Row justify="between" align="center" gap="sm">
+        <Text muted size="xs">
+          {s.pointDetail(p.key, p.wiredIn)}
+        </Text>
+        <Button size="xs" variant="outline" icon="delete" tooltip={s.removePointTip} onPress={() => launch(s.removePointPrompt(guide, p))}>
+          {s.removePoint}
+        </Button>
+      </Row>
+    </Stack>
+  )
+}
+
+/**
+ * What can write here, as the CLI recorded it: asks first, in the order they were recorded, under Add a point
+ * and Align. Every action hands the change to an agent with a prompt. Closed until opened, then as left.
+ */
+function pointsSection(points: WiredPoint[], guide: string) {
+  const s = t()
+  const ordered = [...points.filter((p) => p.kind === 'ask'), ...points.filter((p) => p.kind === 'notify')]
+  return (
+    <Collapsible title={s.points(points.length)} description={s.pointsDescription} open={read(pointsOpen)} onChange={(open) => set(pointsOpen, open)}>
+      <Stack gap="md">
+        <Row gap="sm">
+          <Button size="sm" variant="solid" tone="accent" icon="add" tooltip={s.addPointTip} onPress={() => launch(s.addPointPrompt(guide))}>
+            {s.addPoint}
+          </Button>
+          <Button size="sm" variant="outline" icon="search" tooltip={s.alignPointsTip} onPress={() => launch(s.alignPointsPrompt(guide))}>
+            {s.alignPoints}
+          </Button>
+        </Row>
+        {points.length === 0 ? (
+          <Text muted size="sm">
+            {s.noPoints}
+          </Text>
+        ) : (
+          ordered.map((p) => pointRow(p, guide))
+        )}
       </Stack>
     </Collapsible>
+  )
+}
+
+/** Waits on a person who has not sent anything yet; the log path setting describes the same afterwards. */
+function setupCard(setup: Setup) {
+  const s = t()
+  const prompt = s.setupPrompt(setup.guide)
+  return (
+    <Card title={s.setup} description={s.setupDescription}>
+      <Stack gap="sm">
+        <Text size="sm">{s.setupBody}</Text>
+        <Code block>{prompt}</Code>
+        <KeyValue
+          items={[
+            { label: s.cli, value: setup.cli, code: true },
+            { label: s.guide, value: setup.guide, code: true },
+            { label: s.log, value: setup.log, code: true }
+          ]}
+        />
+        <Row gap="xs" align="center">
+          <Button size="sm" icon="copy" onPress={() => copy(prompt)}>
+            {s.copyPrompt}
+          </Button>
+          <Button size="sm" variant="ghost" icon="check" onPress={finishSetup} tooltip={s.setupDoneTip}>
+            {s.resolve}
+          </Button>
+          {read(copied) && (
+            <Text muted size="xs">
+              {s.copied}
+            </Text>
+          )}
+        </Row>
+      </Stack>
+    </Card>
   )
 }
 
@@ -165,11 +328,7 @@ export default function Panel() {
   }
   return (
     <Stack gap="md">
-      <Row justify="between" align="center">
-        <Row gap="xs" align="center">
-          <Heading level={2}>{s.waiting}</Heading>
-          <Badge tone={data.waiting.length > 0 ? 'warning' : 'neutral'}>{String(data.waiting.length)}</Badge>
-        </Row>
+      <Row justify="end">
         <IconButton icon="refresh" label={s.refresh} size="sm" variant="ghost" onPress={() => void refresh()} />
       </Row>
       {error !== null && <Callout tone="danger">{error}</Callout>}
@@ -178,23 +337,20 @@ export default function Panel() {
           {data.error}
         </Callout>
       )}
-      {data.waiting.length === 0 ? (
-        <EmptyState icon="check" title={s.noneWaiting} />
-      ) : (
-        <Stack gap="sm">{data.waiting.map(waitingCard)}</Stack>
-      )}
-      <Separator />
-      <Collapsible title={s.messages(data.messages.length)} description={s.lastDays(data.retentionDays)} defaultOpen>
-        {data.messages.length === 0 ? (
-          <Text muted size="sm">
-            {s.noMessages}
-          </Text>
+      <Collapsible title={s.waiting(data.waiting.length + (data.setupPending ? 1 : 0))} defaultOpen>
+        {data.waiting.length === 0 && !data.setupPending ? (
+          <EmptyState icon="check" title={s.noneWaiting} />
         ) : (
-          <Stack gap="md">{data.messages.map(messageRow)}</Stack>
+          <Stack gap="sm">
+            {data.setupPending && setupCard(data.setup)}
+            {byProject(data.waiting).map(projectGroup)}
+          </Stack>
         )}
       </Collapsible>
       <Separator />
-      {setupSection(data)}
+      {messagesSection(data.messages, data.retentionDays)}
+      <Separator />
+      {pointsSection(data.points, data.setup.guide)}
     </Stack>
   )
 }

@@ -12,12 +12,21 @@
 #       the person answered: the workspace moves back to the resolved column, if it is still waiting
 #   agent-inbox test [--worktree <path>]
 #       drill: an ask for the key TEST; undo it with `agent-inbox resolve TEST`
+#   agent-inbox point add <id> <ask|notify> <key> <when> <wired-in>
+#       record a point of the workflow that sends, for the panel's Wired points: <id> names the point
+#       (letters, digits, . _ -), <key> is the key it sends (a placeholder such as <ticket> when it
+#       varies), <when> says when it sends, <wired-in> where it is wired. The same id again replaces it
+#   agent-inbox point remove <id>
+#       the point no longer sends
+#   agent-inbox point list
+#       the recorded points, one JSON object per line
 #   agent-inbox where
 #       print the settings in use
 #
 # <key> names the work (a ticket, a job, a workspace). --worktree defaults to the Git top level of the
 # current directory. Settings: the environment (AGENT_INBOX_LOG, AGENT_INBOX_WAITING, AGENT_INBOX_RESUME,
-# AGENT_INBOX_ORCA), then ~/.config/agent-inbox/config.env, then the defaults below.
+# AGENT_INBOX_ORCA), then ~/.config/agent-inbox/config.env, then the defaults below. The points are kept
+# beside the log: inbox.jsonl keeps them in inbox.points.jsonl.
 # Exit codes: 0 done, 2 usage, 3 the orca CLI is missing or failed, 4 the log stayed locked.
 set -euo pipefail
 
@@ -30,6 +39,7 @@ WAITING=${env_waiting:-${AGENT_INBOX_WAITING:-in-review}}
 RESUME=${env_resume:-${AGENT_INBOX_RESUME:-in-progress}}
 ORCA=${env_orca:-${AGENT_INBOX_ORCA:-}}
 case $LOG in "~/"*) LOG=$HOME/${LOG#"~/"} ;; esac
+POINTS=${LOG%.jsonl}.points.jsonl
 
 die() { code=$1; shift; echo "agent-inbox: $*" >&2; exit "$code"; }
 usage() { sed -n '/^#   agent-inbox notify/,/^#       print the settings/s/^#//p' "$0" >&2; exit 2; }
@@ -91,6 +101,23 @@ append() { # kind key message url worktree
   trap - EXIT
 }
 
+# Rewrites the points without the one named $1, then adds the line $2 if given. Ids are letters, digits and
+# . _ -, so the line prefix names the point exactly. Under the log's lock, so two writers never mix.
+put_point() { # id [line]
+  local tmp=$POINTS.tmp-$$
+  mkdir -p "$(dirname "$POINTS")"
+  lock
+  {
+    if [ -f "$POINTS" ]; then P="{\"v\":1,\"id\":\"$1\"," awk 'index($0, ENVIRON["P"]) != 1' "$POINTS"; fi
+    if [ -n "${2:-}" ]; then printf '%s\n' "$2"; fi
+  } > "$tmp"
+  mv "$tmp" "$POINTS"
+  unlock
+  trap - EXIT
+}
+point_id() { case ${1:-} in '' | *[!A-Za-z0-9._-]*) die 2 "point id must be letters, digits, . _ or -: '${1:-}'" ;; esac; }
+has_point() { [ -f "$POINTS" ] && grep -qF "{\"v\":1,\"id\":\"$1\"," "$POINTS"; }
+
 [ $# -ge 1 ] || usage
 cmd=$1
 shift
@@ -130,9 +157,32 @@ case $cmd in
     append resolve "$1" "" "" "$wt"
     echo "resolve $1"
     ;;
+  point)
+    case ${1:-} in
+      add)
+        [ $# -eq 6 ] && [ -n "$4" ] && [ -n "$5" ] && [ -n "$6" ] || usage
+        point_id "$2"
+        case $3 in ask | notify) ;; *) die 2 "point kind must be ask or notify: '$3'" ;; esac
+        put_point "$2" "$(printf '{"v":1,"id":"%s","kind":"%s","key":%s,"when":%s,"wiredIn":%s,"ts":"%s"}' \
+          "$2" "$3" "$(json "$4")" "$(json "$5")" "$(json "$6")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")"
+        echo "point $2: $3 when $5"
+        ;;
+      remove)
+        [ $# -eq 2 ] || usage
+        point_id "$2"
+        if has_point "$2"; then put_point "$2"; echo "point $2 removed"; else echo "no point $2"; fi
+        ;;
+      list)
+        [ $# -eq 1 ] || usage
+        if [ -f "$POINTS" ]; then cat "$POINTS"; fi
+        ;;
+      *) usage ;;
+    esac
+    ;;
   where)
     find_orca || true
-    printf 'log      %s\nwaiting  %s\nresolved %s\norca     %s\nconfig   %s\n' "$LOG" "$WAITING" "$RESUME" "${ORCA:-not found}" "$CONFIG"
+    printf 'log      %s\npoints   %s\nwaiting  %s\nresolved %s\norca     %s\nconfig   %s\n' \
+      "$LOG" "$POINTS" "$WAITING" "$RESUME" "${ORCA:-not found}" "$CONFIG"
     ;;
   -h | --help | help) usage ;;
   *) usage ;;

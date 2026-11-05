@@ -46,10 +46,7 @@ test('prune keeps the window and every open ask however old, and drops broken li
   )
 })
 
-test('messages are the notify lines of the window, newest first, without the dismissed ones', () => {
+test('messages are the notify lines of the window, newest first', () => {
   const entries = parseLog([line(9, 'notify', 'GONE'), line(3, 'notify', 'A'), line(2, 'ask', 'X', '/x'), line(1, 'notify', 'B')].join('\n'))
-  const all = recentMessages(entries, NOW, 7, new Set())
-  assert.deepEqual(all.map((e) => e.key), ['B', 'A'])
-  const dismissed = new Set([`${all[0].at}|B|notify B`])
-  assert.deepEqual(recentMessages(entries, NOW, 7, dismissed).map((e) => e.key), ['A'])
+  assert.deepEqual(recentMessages(entries, NOW, 7).map((e) => e.key), ['B', 'A'])
 })

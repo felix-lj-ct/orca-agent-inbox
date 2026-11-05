@@ -1,10 +1,11 @@
 // The files the plugin owns outside Orca: what it installs into ~/.config/agent-inbox for agents and
-// scripts, and the log, which it prunes under the same lock the CLI appends under.
+// scripts, the log, which it prunes under the same lock the CLI appends under, and the points beside it.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configDir, type InboxConfig, renderEnv } from './config'
 import { type Entry, keepLines, parseLog } from './log'
-import type { Setup } from './protocol'
+import { parsePoints, pointsPath } from './points'
+import type { Setup, WiredPoint } from './protocol'
 
 /** The CLI breaks a lock it waited ~5 s for; one this old was left by a killed process. */
 const STALE_LOCK_MS = 10_000
@@ -71,4 +72,10 @@ export function prune(config: InboxConfig, now = Date.now()): number {
 
 export function readEntries(logPath: string): Entry[] {
   return existsSync(logPath) ? parseLog(readFileSync(logPath, 'utf8')) : []
+}
+
+/** The points recorded beside the log; none before the first `agent-inbox point add`. */
+export function readPoints(logPath: string): WiredPoint[] {
+  const path = pointsPath(logPath)
+  return existsSync(path) ? parsePoints(readFileSync(path, 'utf8')) : []
 }

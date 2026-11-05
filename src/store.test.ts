@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readConfig } from './config'
 import { parseLog } from './log'
-import { install, prune, readEntries } from './store'
+import { install, prune, readEntries, readPoints } from './store'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'cli', 'agent-inbox.sh')
@@ -89,6 +89,41 @@ test('notify, ask and resolve write the log and move the workspace on the board'
     `worktree show --worktree path:${workspace} --json`,
     `worktree set --worktree path:${workspace} --workspace-status in-progress --comment  --json`
   ])
+})
+
+test('point add, remove and list keep the points beside the log', async () => {
+  const { home, config, cli } = sandbox()
+  install(config, home, ROOT)
+  const when = 'a design "decision" back\\slash 中文'
+  assert.equal((await cli('point', 'add', 'design', 'ask', '<ticket>', when, 'CLAUDE.md (A)')).code, 0)
+  assert.equal((await cli('point', 'add', 'cleanup', 'notify', 'cleanup', 'the cleanup failed', 'precheck cleanup.sh')).code, 0)
+  assert.deepEqual(readPoints(config.logPath), [
+    { id: 'design', kind: 'ask', key: '<ticket>', when, wiredIn: 'CLAUDE.md (A)' },
+    { id: 'cleanup', kind: 'notify', key: 'cleanup', when: 'the cleanup failed', wiredIn: 'precheck cleanup.sh' }
+  ])
+  assert.ok(existsSync(join(home, 'state/inbox.points.jsonl')))
+
+  // the same id replaces the point; remove takes it out, and a second remove changes nothing
+  assert.equal((await cli('point', 'add', 'design', 'ask', '<ticket>', 'replaced', 'CLAUDE.md (A)')).code, 0)
+  assert.equal((await cli('point', 'remove', 'cleanup')).code, 0)
+  assert.equal((await cli('point', 'remove', 'cleanup')).stdout, 'no point cleanup\n')
+  assert.deepEqual(readPoints(config.logPath).map((p) => [p.id, p.when]), [['design', 'replaced']])
+  const list = await cli('point', 'list')
+  assert.equal(list.code, 0)
+  assert.equal(JSON.parse(list.stdout).when, 'replaced')
+
+  for (const args of [
+    ['point', 'add', 'bad id', 'ask', 'K', 'w', 'i'],
+    ['point', 'add', 'x', 'shout', 'K', 'w', 'i'],
+    ['point', 'add', 'x', 'ask', 'K', 'w'],
+    ['point', 'add', 'x', 'ask', 'K', '', 'i'],
+    ['point', 'remove'],
+    ['point']
+  ]) {
+    assert.equal((await cli(...args)).code, 2, args.join(' '))
+  }
+  assert.equal(readPoints(config.logPath).length, 1)
+  assert.equal(readEntries(config.logPath).length, 0)
 })
 
 test('resolve leaves a workspace the person already moved on alone', async () => {
