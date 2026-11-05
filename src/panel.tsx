@@ -28,11 +28,12 @@ import {
   type PanelContext
 } from 'orca'
 import { strings } from './i18n'
-import type { ActionResult, Inbox, InboxMessage, Setup, WaitingItem, WiredPoint } from './protocol'
+import { type ActionResult, type Inbox, type InboxMessage, REPO, type Setup, type WaitingItem, type WiredPoint } from './protocol'
 
 const REFRESH_MS = 60_000
 /** Messages shown at first in each list, and how many more each Show more adds. */
 const MESSAGE_PAGE = 20
+const REPO_URL = `https://github.com/${REPO}`
 
 const inbox = atom<Inbox | null>(null)
 /** The last failed request or action, shown until the next one succeeds. */
@@ -42,6 +43,10 @@ const shownMessages = { unread: atom(MESSAGE_PAGE), history: atom(MESSAGE_PAGE) 
 const copied = atom(false)
 /** Wired points stay open or closed as the person left them; a run ends whenever another sidebar tab shows. */
 const pointsOpen = atom('pointsOpen', false, { persist: 'plugin' })
+/** The footer's Star worked once; it then only says thanks. */
+const starred = atom('starred', false, { persist: 'plugin' })
+/** busy while gh stars; failed: gh is missing or signed out, so the footer links to the page for this run. */
+const starring = atom<'idle' | 'busy' | 'failed'>('idle')
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const t = () => strings(read(inbox)?.language ?? 'auto', env.locale)
@@ -84,6 +89,19 @@ const copy = async (text: string) => set(copied, await act(plugin.request('inbox
 const finishSetup = () => act(plugin.request('inbox.setupDone'), refresh)
 /** The agent opens focused in the selected workspace; the points list follows its `point add` or `point remove`. */
 const launch = (prompt: string) => act(plugin.request('inbox.launch', { prompt }))
+
+/** Not through act: a star that fails is no problem of the inbox, so it stays in the footer. */
+async function star(): Promise<void> {
+  set(starring, 'busy')
+  let ok = false
+  try {
+    ok = (await plugin.request('inbox.star')).ok
+  } catch {
+    // the worker is down: the link to the page still works
+  }
+  if (ok) set(starred, true)
+  set(starring, ok ? 'idle' : 'failed')
+}
 
 export function setup(ctx: PanelContext): void {
   void refresh()
@@ -319,13 +337,47 @@ function setupCard(setup: Setup) {
   )
 }
 
-export default function Panel() {
-  const data = read(inbox)
-  const error = read(failure)
+/** Star stars the repository through the person's gh CLI; without gh it links to the page instead. */
+function starLine() {
   const s = t()
-  if (data === null) {
-    return <Stack gap="md">{error !== null ? <Callout tone="danger">{error}</Callout> : <Spinner label={s.loading} />}</Stack>
+  if (read(starred)) {
+    return (
+      <Text muted size="xs">
+        {s.starred}
+      </Text>
+    )
   }
+  if (read(starring) === 'failed') {
+    return (
+      <Text muted size="xs">
+        {s.starNeedsGh} <Link href={REPO_URL}>{s.starOnPage}</Link>
+      </Text>
+    )
+  }
+  return (
+    <Row gap="sm" align="center" justify="center" wrap>
+      <Text muted size="xs">
+        {s.starAsk}
+      </Text>
+      <Button size="xs" variant="outline" icon="star" tooltip={s.starTip} disabled={read(starring) === 'busy'} onPress={star}>
+        {s.star}
+      </Button>
+    </Row>
+  )
+}
+
+/** Under everything, at the bottom of the panel however little is above it. */
+function footer() {
+  return (
+    <Stack gap="sm">
+      <Separator />
+      <Row justify="center">{starLine()}</Row>
+    </Stack>
+  )
+}
+
+function inboxView(data: Inbox, error: string | null) {
+  const s = t()
   return (
     <Stack gap="md">
       <Row justify="end">
@@ -352,5 +404,26 @@ export default function Panel() {
       <Separator />
       {pointsSection(data.points, data.setup.guide)}
     </Stack>
+  )
+}
+
+/**
+ * Orca's sidebar keeps no room for its scrollbar, so content growing past the window height would narrow the
+ * whole panel. At least the full height plus a margin, the panel always overflows a little: the scrollbar stays
+ * and nothing shifts sideways when a section opens or closes.
+ */
+export default function Panel() {
+  const data = read(inbox)
+  const error = read(failure)
+  const s = t()
+  return (
+    <Box minHeight="100%" shrink={false} margin="xs" justify="between" gap="lg">
+      {data !== null ? (
+        inboxView(data, error)
+      ) : (
+        <Stack gap="md">{error !== null ? <Callout tone="danger">{error}</Callout> : <Spinner label={s.loading} />}</Stack>
+      )}
+      {footer()}
+    </Box>
   )
 }

@@ -59,7 +59,13 @@ const en = {
   setupPrompt: (guide: string) => `Read ${guide}, go through my workflow, and tell me where to send Agent Inbox messages and how to wire each one.`,
   cli: 'CLI',
   guide: 'Agent guide',
-  log: 'Log'
+  log: 'Log',
+  starAsk: 'Find Agent Inbox useful?',
+  star: 'Star on GitHub',
+  starTip: 'Star felix-lj-ct/orca-agent-inbox with your GitHub account, through your gh CLI',
+  starred: 'Starred on GitHub. Thank you!',
+  starNeedsGh: 'Starring from here needs the gh CLI, signed in (gh auth login). Or',
+  starOnPage: 'star it on the page'
 }
 
 type Strings = typeof en
@@ -118,7 +124,13 @@ const zhCN: Strings = {
   setupPrompt: (guide) => `读 ${guide}，梳理我的工作流，告诉我哪些节点该发 Agent Inbox 消息、各自怎么接入。`,
   cli: 'CLI',
   guide: 'Agent 指南',
-  log: '日志'
+  log: '日志',
+  starAsk: '觉得 Agent Inbox 好用？',
+  star: '在 GitHub 点 Star',
+  starTip: '用你的 GitHub 账号，通过本机的 gh 命令给 felix-lj-ct/orca-agent-inbox 点 Star',
+  starred: '已在 GitHub 点 Star，谢谢支持！',
+  starNeedsGh: '在这里直接点 Star 需要已登录的 gh 命令（gh auth login）；也可以',
+  starOnPage: '去页面点 Star'
 }
 
 export function strings(language: Language, orcaLocale: string): Strings {

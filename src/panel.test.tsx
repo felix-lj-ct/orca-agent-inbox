@@ -35,6 +35,7 @@ test('shows what waits and the messages, and resolves', async () => {
     assert.ok(view.find({ text: /^BUILD nightly build failed/ }))
     assert.ok(view.find({ text: /^Messages \(1\)/ }))
     assert.ok(view.find({ text: /^Waiting on you \(1\)/ }))
+    assert.ok(view.find({ type: 'Button', text: 'Star on GitHub' }))
 
     await view.press({ text: 'Mark handled' })
     assert.deepEqual(resolved, [{ path: '/w/a', key: 'P-1' }])
@@ -58,6 +59,7 @@ test('speaks Chinese when set, and explains a workspace without a terminal', asy
   try {
     assert.ok(view.find({ text: /^等你处理（1）/ }))
     assert.ok(view.find({ text: /^消息（1）/ }))
+    assert.ok(view.find({ type: 'Button', text: '在 GitHub 点 Star' }))
     await view.press({ text: '去处理' })
     assert.ok(view.find({ text: '这个工作区没有打开的终端，请从侧边栏打开它' }))
   } finally {
@@ -245,6 +247,47 @@ test('Add a point, Align and Remove start an agent with a prompt, and say when n
     assert.equal(view.find({ text: 'Select a workspace in Orca first; the agent starts there' }), null)
     await view.press({ text: 'Add a point' })
     assert.ok(view.find({ text: 'Select a workspace in Orca first; the agent starts there' }))
+    assert.deepEqual(view.errors, [])
+    assert.deepEqual(view.refusals, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('Star stars through the worker and then only thanks; without gh it links to the page', async () => {
+  let starOk = false
+  let stars = 0
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => inbox('en', false),
+      'inbox.star': () => {
+        stars++
+        return starOk ? { ok: true } : { ok: false, error: 'gh: To get started with GitHub CLI, please run:  gh auth login' }
+      }
+    }
+  })
+  const failing = await mount(panel, { host })
+  try {
+    await failing.press({ text: 'Star on GitHub' })
+    assert.equal(stars, 1)
+    assert.equal(failing.find({ text: 'Star on GitHub' }), null)
+    assert.ok(failing.find({ text: /^Starring from here needs the gh CLI/ }))
+    assert.equal(failing.find({ type: 'Link', text: 'star it on the page' })?.props.href, 'https://github.com/felix-lj-ct/orca-agent-inbox')
+    // a footer matter, not the inbox's
+    assert.equal(failing.findAll({ type: 'Callout' }).length, 0)
+    assert.deepEqual(failing.errors, [])
+  } finally {
+    await failing.unmount()
+  }
+
+  starOk = true
+  const view = await mount(panel, { host })
+  try {
+    await view.press({ text: 'Star on GitHub' })
+    assert.equal(stars, 2)
+    assert.ok(view.find({ text: 'Starred on GitHub. Thank you!' }))
+    assert.equal(view.find({ text: 'Star on GitHub' }), null)
+    assert.equal(view.persisted.plugin.starred, true)
     assert.deepEqual(view.errors, [])
     assert.deepEqual(view.refusals, [])
   } finally {

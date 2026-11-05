@@ -22,6 +22,9 @@ you for:
   differences and the commands that fix the list, and runs them once you agree. It changes only the list,
   never your workflow, and names problems it sees in the calls for you to fix.
 
+At the bottom, **Star on GitHub** stars this repository with your GitHub account through your `gh` CLI; when
+`gh` is missing or signed out it says so and links to the page instead.
+
 Agents and scripts send with one CLI, `agent-inbox`, at the points of your workflow that need you. The plugin
 ships a guide written for agents (`guide/agent-guide.md`): your agent goes through your workflow, Orca
 automations included, finds those points and proposes how to wire each one.
@@ -133,10 +136,12 @@ The plugin runs as a `trusted-worker`: a Node.js process with your user's access
   (`profile-state.db` through the `sqlite3` command, else the older `orca-data.json`), because Orca does not
   give plugins that setting; it starts `claude` when it cannot tell;
 - write `~/.config/agent-inbox/` and the log file, remove log lines past the retention window, and read the
-  points file beside the log.
+  points file beside the log;
+- when you press **Star on GitHub**, run `gh api --method PUT /user/starred/felix-lj-ct/orca-agent-inbox`
+  with your own `gh` sign-in.
 
 It asks Orca only for `storage:own` (which messages are read, the setup task) and `settings:own` (its settings), and
-contributes no commands or status bar items. It makes no network requests.
+contributes no commands or status bar items. Its only network request is that star, made when you press it.
 
 The worker runs while the panel needs it and stops when idle. Each start installs `~/.config/agent-inbox/` from
 the current settings and prunes the log, so a settings change reaches the CLI the next time the panel opens.

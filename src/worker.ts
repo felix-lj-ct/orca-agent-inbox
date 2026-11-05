@@ -2,8 +2,8 @@
 // agent guide into ~/.config/agent-inbox and prunes the log to the retention window, then prunes again
 // every hour. It answers the panel from the log and the Orca board, which it reads through the orca CLI
 // (the host API has no board), lists the points recorded beside the log, starts the agent that adds, removes
-// or aligns them, and tells open panels when the log or the points change. Orca starts it for a panel request
-// and stops it when idle.
+// or aligns them, stars the repository through gh when the person asks, and tells open panels when the log or the
+// points change. Orca starts it for a panel request and stops it when idle.
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
@@ -15,7 +15,7 @@ import { configDir, type InboxConfig, readConfig } from './config'
 import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir } from './launch'
 import { messageId, openAsks, recentMessages } from './log'
 import { pointsPath } from './points'
-import type { ActionResult, Inbox, Setup } from './protocol'
+import { type ActionResult, type Inbox, REPO, type Setup } from './protocol'
 import { install, prune, readEntries, readPoints } from './store'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -264,6 +264,17 @@ export default function activate(orca: OrcaWorkerApi): void {
       await orcaJson(config, 'agent', 'launch', '--agent', agent, '--worktree', `path:${workspace}`, '--prompt', String(prompt), '--focus')
       return { ok: true }
     } catch (e) {
+      return { ok: false, error: errorText(e) }
+    }
+  })
+
+  // only when the person presses Star: the plugin's one request to the network, with their own gh sign-in
+  orca.panels.handle('inbox.star', async () => {
+    try {
+      await run('gh', ['api', '--method', 'PUT', `/user/starred/${REPO}`])
+      return { ok: true }
+    } catch (e) {
+      orca.log(`star ${REPO}: ${errorText(e)}`)
       return { ok: false, error: errorText(e) }
     }
   })

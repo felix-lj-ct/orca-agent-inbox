@@ -1,6 +1,9 @@
 // The panel <-> worker contract, declared once: src/panel.tsx and src/worker.ts both read it.
 import type { Language } from './config'
 
+/** The repository the panel's footer asks to star. */
+export const REPO = 'felix-lj-ct/orca-agent-inbox'
+
 /** A workspace in the waiting column: `agent-inbox ask` (or the person) put it there. */
 export interface WaitingItem {
   path: string
@@ -81,6 +84,8 @@ declare module 'orca' {
      * points' Add a point, Align and Remove. Fails with `no-workspace` when none is selected.
      */
     'inbox.launch': { input: { prompt: string }; output: ActionResult }
+    /** Stars REPO with the person's GitHub account through their gh CLI; fails when gh is missing or signed out. */
+    'inbox.star': { output: ActionResult }
   }
   interface PluginPanelEvents {
     /** The log or the settings changed. */

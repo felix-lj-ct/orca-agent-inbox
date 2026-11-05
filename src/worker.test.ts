@@ -231,3 +231,29 @@ test("launch starts Orca's default agent with the prompt in the selected workspa
     await worker.deactivate()
   })
 })
+
+test('star stars the repository through gh, and passes on why gh could not', async () => {
+  const { home, orca, logPath } = sandbox()
+  const bin = join(home, 'bin')
+  mkdirSync(bin)
+  // first on PATH, so the tests never reach a real gh
+  const gh = join(bin, 'gh')
+  writeFileSync(gh, `#!/bin/bash\necho "$*" >> "${home}/gh-calls"\n`, { mode: 0o755 })
+  const path = process.env.PATH
+  process.env.PATH = `${bin}${delimiter}${path}`
+  try {
+    await withHome(home, async () => {
+      const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
+      assert.deepEqual(await worker.request('inbox.star'), { ok: true })
+      assert.equal(readFileSync(join(home, 'gh-calls'), 'utf8'), 'api --method PUT /user/starred/felix-lj-ct/orca-agent-inbox\n')
+
+      writeFileSync(gh, `#!/bin/bash\necho 'To get started with GitHub CLI, please run:  gh auth login' >&2\nexit 4\n`, { mode: 0o755 })
+      const failed = await worker.request('inbox.star')
+      assert.equal(failed.ok, false)
+      assert.match(String(failed.error), /gh auth login/)
+      await worker.deactivate()
+    })
+  } finally {
+    process.env.PATH = path
+  }
+})
