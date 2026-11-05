@@ -1,0 +1,112 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "id": "agent-inbox",
+  "name": "Agent Inbox",
+  "version": "0.1.0",
+  "description": "What your agents and scripts wait on you for, in one sidebar panel: workspaces they parked on the board with the reason, and the messages they sent. They call one CLI at the points of your workflow that need you.",
+  "license": "MIT",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "inbox",
+        "title": "Agent Inbox",
+        "icon": "bell",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
+      },
+      {
+        "on": "workspace.created"
+      },
+      {
+        "on": "workspace.removed"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "waiting",
+        "icon": "bell",
+        "tone": "warning",
+        "tooltip": "Agent Inbox: workspaces waiting on you"
+      }
+    ],
+    "settings": [
+      {
+        "key": "logPath",
+        "title": "Log file",
+        "description": "Where the agent-inbox CLI writes messages and the panel reads them. ~ is your home folder. The CLI follows a change on its next call; a new path starts a new log and leaves the old file where it is.",
+        "type": "string",
+        "default": "~/.local/state/agent-inbox/inbox.jsonl",
+        "maxLength": 1024
+      },
+      {
+        "key": "retentionDays",
+        "title": "Keep messages for (days)",
+        "description": "Older lines are removed from the log when Orca starts, every hour and when settings change. A request still waiting on you is kept however old it is.",
+        "type": "integer",
+        "default": 7,
+        "minimum": 1,
+        "maximum": 365
+      },
+      {
+        "key": "waitingStatus",
+        "title": "Waiting column",
+        "description": "Board status id that `agent-inbox ask` moves the workspace to; the panel lists every workspace in it. Orca's defaults are todo, in-progress, in-review and completed; a custom column uses its own id.",
+        "type": "string",
+        "default": "in-review",
+        "maxLength": 128
+      },
+      {
+        "key": "resumeStatus",
+        "title": "Resolved column",
+        "description": "Board status id that `agent-inbox resolve` and Mark handled move the workspace back to, when it is still in the waiting column.",
+        "type": "string",
+        "default": "in-progress",
+        "maxLength": 128
+      },
+      {
+        "key": "language",
+        "title": "Language",
+        "description": "Language of the panel.",
+        "type": "string",
+        "enum": ["auto", "en", "zh-CN"],
+        "enumLabels": ["Same as Orca", "English", "简体中文"],
+        "default": "auto"
+      },
+      {
+        "key": "orcaCli",
+        "title": "orca command",
+        "description": "Path to the orca CLI. Leave empty to find it in the Orca app or on PATH.",
+        "type": "string",
+        "default": "",
+        "placeholder": "/usr/local/bin/orca",
+        "maxLength": 1024
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "agent:read"
+    }
+  ]
+}
