@@ -28,11 +28,11 @@ import {
   type PanelContext
 } from 'orca'
 import { strings } from './i18n'
-import { type ActionResult, type Inbox, type InboxMessage, REPO, type Setup, type WaitingItem, type WiredPoint } from './protocol'
+import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup, type WaitingItem, type WiredPoint } from './protocol'
 
 const REFRESH_MS = 60_000
-/** Messages shown at first in each list, and how many more each Show more adds. */
-const MESSAGE_PAGE = 20
+/** The longest a request may wait: the worker reads the board, then gives the agent up to a minute to start. */
+const LAUNCH_TIMEOUT_MS = 120_000
 const REPO_URL = `https://github.com/${REPO}`
 
 const inbox = atom<Inbox | null>(null)
@@ -53,7 +53,7 @@ const t = () => strings(read(inbox)?.language ?? 'auto', env.locale)
 
 async function refresh(): Promise<void> {
   try {
-    set(inbox, await plugin.request('inbox.list'))
+    set(inbox, await plugin.request('inbox.list', { unread: read(shownMessages.unread), read: read(shownMessages.history) }))
     set(failure, null)
   } catch (e) {
     set(failure, t().loadFailed(errorText(e)))
@@ -80,15 +80,25 @@ async function act(request: Promise<ActionResult>, then?: () => Promise<void>): 
 const goTo = (w: WaitingItem) => act(plugin.request('inbox.open', { path: w.path, terminal: w.terminal }))
 const resolve = (w: WaitingItem) => act(plugin.request('inbox.resolve', { path: w.path, key: w.key }), refresh)
 const markRead = (messages: InboxMessage[]) => act(plugin.request('inbox.read', { ids: messages.map((m) => m.id) }), refresh)
-const openLink = (url: string) => void shell.openExternal(url)
-const openMessage = (m: InboxMessage) => {
-  openLink(m.url as string)
-  if (!m.read) void markRead([m])
+/** Every unread message up to the newest shown, those behind Show more too. */
+const markAllRead = (newest: InboxMessage) => act(plugin.request('inbox.readAll', { through: newest.at }), refresh)
+/** Whether the link opened: Orca refuses one that is not http, https or mailto, and the person may cancel its prompt. */
+async function openLink(url: string): Promise<boolean> {
+  try {
+    return (await shell.openExternal(url)).opened
+  } catch (e) {
+    set(failure, t().openLinkFailed(errorText(e)))
+    return false
+  }
+}
+/** A message counts as read once its link opened. */
+const openMessage = async (m: InboxMessage) => {
+  if ((await openLink(m.url as string)) && !m.read) await markRead([m])
 }
 const copy = async (text: string) => set(copied, await act(plugin.request('inbox.copy', { text })))
 const finishSetup = () => act(plugin.request('inbox.setupDone'), refresh)
 /** The agent opens focused in the selected workspace; the points list follows its `point add` or `point remove`. */
-const launch = (prompt: string) => act(plugin.request('inbox.launch', { prompt }))
+const launch = (prompt: string) => act(plugin.request('inbox.launch', { prompt }, { timeoutMs: LAUNCH_TIMEOUT_MS }))
 
 /** Not through act: a star that fails is no problem of the inbox, so it stays in the footer. */
 async function star(): Promise<void> {
@@ -198,15 +208,19 @@ function messageRow(m: InboxMessage) {
   )
 }
 
-function messageList(messages: InboxMessage[], list: keyof typeof shownMessages) {
+/** The messages the worker sent for a list, and Show more while it holds more than that. */
+function messageList(messages: InboxMessage[], total: number, list: keyof typeof shownMessages) {
   const s = t()
-  const shown = read(shownMessages[list])
-  const rest = messages.length - shown
+  const rest = total - messages.length
+  const showMore = () => {
+    set(shownMessages[list], messages.length + MESSAGE_PAGE)
+    return refresh()
+  }
   return (
     <Stack gap="md">
-      {messages.slice(0, shown).map(messageRow)}
+      {messages.map(messageRow)}
       {rest > 0 && (
-        <Button size="sm" variant="ghost" onPress={() => set(shownMessages[list], shown + MESSAGE_PAGE)}>
+        <Button size="sm" variant="ghost" onPress={showMore}>
           {s.showMore(rest)}
         </Button>
       )}
@@ -215,14 +229,14 @@ function messageList(messages: InboxMessage[], list: keyof typeof shownMessages)
 }
 
 /** Unread and Read tabs; Mark all read sits over the unread ones. */
-function messagesSection(messages: InboxMessage[], retentionDays: number) {
+function messagesSection(data: Inbox) {
   const s = t()
-  const unread = messages.filter((m) => !m.read)
-  const history = messages.filter((m) => m.read)
+  const unread = data.messages.filter((m) => !m.read)
+  const history = data.messages.filter((m) => m.read)
   return (
-    <Collapsible title={s.messages(unread.length)} description={s.lastDays(retentionDays)} defaultOpen>
+    <Collapsible title={s.messages(data.unreadCount)} description={s.lastDays(data.retentionDays)} defaultOpen>
       <Tabs label={s.messagesTabs} defaultValue="unread">
-        <Tab value="unread" label={s.unreadTab(unread.length)}>
+        <Tab value="unread" label={s.unreadTab(data.unreadCount)}>
           {unread.length === 0 ? (
             <Text muted size="sm">
               {s.noUnread}
@@ -230,21 +244,21 @@ function messagesSection(messages: InboxMessage[], retentionDays: number) {
           ) : (
             <Stack gap="md">
               <Row justify="end">
-                <Button size="sm" variant="outline" icon="check" onPress={() => markRead(unread)}>
+                <Button size="sm" variant="outline" icon="check" onPress={() => markAllRead(unread[0])}>
                   {s.markAllRead}
                 </Button>
               </Row>
-              {messageList(unread, 'unread')}
+              {messageList(unread, data.unreadCount, 'unread')}
             </Stack>
           )}
         </Tab>
-        <Tab value="read" label={s.readTab(history.length)}>
+        <Tab value="read" label={s.readTab(data.readCount)}>
           {history.length === 0 ? (
             <Text muted size="sm">
               {s.noRead}
             </Text>
           ) : (
-            messageList(history, 'history')
+            messageList(history, data.readCount, 'history')
           )}
         </Tab>
       </Tabs>
@@ -400,7 +414,7 @@ function inboxView(data: Inbox, error: string | null) {
         )}
       </Collapsible>
       <Separator />
-      {messagesSection(data.messages, data.retentionDays)}
+      {messagesSection(data)}
       <Separator />
       {pointsSection(data.points, data.setup.guide)}
     </Stack>

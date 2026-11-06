@@ -13,14 +13,21 @@ import { fileURLToPath } from 'node:url'
 import { waitingItems } from './board'
 import { configDir, type InboxConfig, readConfig } from './config'
 import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir } from './launch'
-import { messageId, openAsks, recentMessages } from './log'
+import { currentId, messageId, openAsks, recentMessages } from './log'
 import { pointsPath } from './points'
-import { type ActionResult, type Inbox, REPO, type Setup } from './protocol'
+import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup } from './protocol'
 import { install, prune, readEntries, readPoints } from './store'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'cli', 'agent-inbox.sh')
 const PRUNE_MS = 3600_000
+/** A request answer stops at 1 MiB: the messages get half of it, the board and the points share the rest. */
+const MESSAGE_BYTES = 512 * 1024
+/** The panel gets this much of a message's text and key; the log keeps them whole. */
+const MAX_TEXT = 2_000
+const MAX_KEY = 200
+/** A longer link is left out, since a cut one would not open. */
+const MAX_URL = 8_192
 /** Ids of the read messages inside the retention window. */
 const READ = 'read'
 /** Before read and unread, hidden messages; they count as read. */
@@ -37,6 +44,26 @@ const ORCA_APP_CLI = '/Applications/Orca.app/Contents/Resources/bin/orca'
 type Raw = any
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+/** The text cut to max characters and an ellipsis, never between the two halves of a surrogate pair. */
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cut = text.slice(0, max)
+  return `${/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut}…`
+}
+
+/** How many messages of a tab the panel asked for; the first page when it did not say. */
+const pageSize = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : MESSAGE_PAGE)
+
+/** The first messages that fit in bytes together, as JSON. */
+function fitting(messages: InboxMessage[], bytes: number): InboxMessage[] {
+  let used = 0
+  for (let i = 0; i < messages.length; i++) {
+    used += Buffer.byteLength(JSON.stringify(messages[i]))
+    if (used > bytes) return messages.slice(0, i)
+  }
+  return messages
+}
 
 // The worker does not get a login shell's PATH.
 const searchPath = () => [process.env.PATH, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].filter(Boolean).join(delimiter)
@@ -168,24 +195,25 @@ export default function activate(orca: OrcaWorkerApi): void {
 
   async function storedIds(key: string): Promise<string[]> {
     const value = await orca.storage.get(key)
-    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string').map(currentId) : []
   }
   const readIds = async () => new Set([...(await storedIds(READ)), ...(await storedIds(DISMISSED))])
 
-  async function list(): Promise<Inbox> {
+  async function list(limits: { unread?: unknown; read?: unknown }): Promise<Inbox> {
     await ready
     const entries = readEntries(config.logPath)
     const read = await readIds()
-    const messages = recentMessages(entries, Date.now(), config.retentionDays).map((e) => ({
-      id: messageId(e),
-      at: e.at,
-      key: e.key,
-      text: e.message,
-      url: e.url,
-      read: read.has(messageId(e))
-    }))
+    const messages = recentMessages(entries, Date.now(), config.retentionDays).map((e): InboxMessage => {
+      const id = messageId(e)
+      const url = e.url !== null && e.url.length <= MAX_URL ? e.url : null
+      return { id, at: e.at, key: clip(e.key, MAX_KEY), text: clip(e.message, MAX_TEXT), url, read: read.has(id) }
+    })
+    const unread = messages.filter((m) => !m.read)
+    const history = messages.filter((m) => m.read)
     const base = {
-      messages,
+      messages: fitting([...unread.slice(0, pageSize(limits.unread)), ...history.slice(0, pageSize(limits.read))], MESSAGE_BYTES),
+      unreadCount: unread.length,
+      readCount: history.length,
       points: readPoints(config.logPath),
       retentionDays: config.retentionDays,
       language: config.language,
@@ -233,17 +261,24 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   }
 
-  orca.panels.handle('inbox.list', () => list())
-  orca.panels.handle('inbox.open', (input) => open(input))
-  orca.panels.handle('inbox.resolve', (input) => resolve(input))
-  orca.panels.handle('inbox.read', async ({ ids }) => {
+  /** Adds ids to the read ones; only ids still inside the retention window stay, so the list does not grow forever. */
+  async function markRead(ids: string[]): Promise<ActionResult> {
     await ready
-    // keep only ids still inside the retention window, so the list does not grow forever
     const live = new Set(recentMessages(readEntries(config.logPath), Date.now(), config.retentionDays).map(messageId))
     const read = new Set([...(await readIds()), ...ids])
     await orca.storage.set(READ, [...read].filter((id) => live.has(id)))
     await orca.storage.delete(DISMISSED)
     return { ok: true }
+  }
+
+  orca.panels.handle('inbox.list', (input) => list(input ?? {}))
+  orca.panels.handle('inbox.open', (input) => open(input))
+  orca.panels.handle('inbox.resolve', (input) => resolve(input))
+  orca.panels.handle('inbox.read', ({ ids }) => markRead(ids))
+  orca.panels.handle('inbox.readAll', async ({ through }) => {
+    await ready
+    const shown = recentMessages(readEntries(config.logPath), Date.now(), config.retentionDays).filter((e) => e.at <= through)
+    return markRead(shown.map(messageId))
   })
 
   orca.panels.handle('inbox.setupDone', async () => {

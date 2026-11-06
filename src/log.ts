@@ -4,6 +4,7 @@
 // kind is notify (a message), ask (the workspace waits on the person) or resolve (it no longer does).
 // Asks and resolves always carry the workspace path; a workspace has one waiting state, so a resolve
 // closes every ask before it in the same workspace.
+import { createHash } from 'node:crypto'
 
 export type EntryKind = 'notify' | 'ask' | 'resolve'
 
@@ -72,7 +73,13 @@ export function keepLines(lines: string[], now: number, retentionDays: number): 
   return parsed.filter(({ entry }) => entry !== null && (entry.at >= from || stillOpen.has(entry))).map((p) => p.raw)
 }
 
-export const messageId = (entry: Entry) => `${entry.at}|${entry.key}|${entry.message}`
+const hashId = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16)
+
+/** Short, so Mark read can send many in one request (a request input stops at 64 KiB). */
+export const messageId = (entry: Entry) => hashId(`${entry.at}|${entry.key}|${entry.message}`)
+
+/** Up to 0.1.1 an id was the text messageId now hashes; a stored one of those becomes the id of today. */
+export const currentId = (id: string) => (id.includes('|') ? hashId(id) : id)
 
 /** Notify entries inside the retention window, newest first. */
 export function recentMessages(entries: Entry[], now: number, retentionDays: number): Entry[] {

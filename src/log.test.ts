@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { keepLines, openAsks, parseLine, parseLog, recentMessages } from './log'
+import { currentId, keepLines, messageId, openAsks, parseLine, parseLog, recentMessages } from './log'
 
 const DAY = 24 * 3600 * 1000
 const NOW = Date.parse('2026-11-20T12:00:00Z')
@@ -49,4 +49,13 @@ test('prune keeps the window and every open ask however old, and drops broken li
 test('messages are the notify lines of the window, newest first', () => {
   const entries = parseLog([line(9, 'notify', 'GONE'), line(3, 'notify', 'A'), line(2, 'ask', 'X', '/x'), line(1, 'notify', 'B')].join('\n'))
   assert.deepEqual(recentMessages(entries, NOW, 7).map((e) => e.key), ['B', 'A'])
+})
+
+test('a message id is short, and an id stored before 0.1.2 becomes the same one', () => {
+  const entry = parseLine(line(1, 'notify', 'BUILD', null, 'nightly build failed | twice'))
+  assert.ok(entry)
+  const id = messageId(entry)
+  assert.match(id, /^[0-9a-f]{16}$/)
+  assert.equal(currentId(`${entry.at}|BUILD|nightly build failed | twice`), id)
+  assert.equal(currentId(id), id)
 })

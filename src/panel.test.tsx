@@ -1,19 +1,29 @@
 // `orca plugin test .` runs this in Node with the same runtime and checks Orca uses.
-import { assert, mockHost, mount, test } from 'orca/testing'
+import { assert, hostError, mockHost, mount, test } from 'orca/testing'
 import * as panel from './panel'
-import type { Inbox } from './protocol'
+import type { Inbox, InboxMessage } from './protocol'
 
 const inbox = (language: Inbox['language'], waiting = true): Inbox => ({
   waiting: waiting
     ? [{ path: '/w/a', key: 'P-1', repo: 'app', reason: 'pick A or B', since: Date.now() - 60_000, url: null, terminal: 'term_1' }]
     : [],
   messages: [{ id: 'm1', at: Date.now() - 3_600_000, key: 'BUILD', text: 'nightly build failed', url: 'https://ci/1', read: false }],
+  unreadCount: 1,
+  readCount: 0,
   points: [],
   retentionDays: 7,
   language,
   setup: { cli: '/h/.config/agent-inbox/bin/agent-inbox', guide: '/h/.config/agent-inbox/agent-guide.md', log: '/h/inbox.jsonl' },
   setupPending: false,
   error: null
+})
+
+/** The inbox with these messages and their counts, as the worker sends it when it holds no more. */
+const withMessages = (messages: InboxMessage[]): Inbox => ({
+  ...inbox('en', false),
+  messages,
+  unreadCount: messages.filter((m) => !m.read).length,
+  readCount: messages.filter((m) => m.read).length
 })
 
 test('shows what waits and the messages, and resolves', async () => {
@@ -67,27 +77,34 @@ test('speaks Chinese when set, and explains a workspace without a terminal', asy
   }
 })
 
-test('lists the newest messages first and the rest behind Show more', async () => {
-  const many: Inbox = {
-    ...inbox('en', false),
-    messages: Array.from({ length: 45 }, (_, i) => {
-      const n = String(i + 1).padStart(2, '0')
-      return { id: `m${n}`, at: Date.now() - (i + 1) * 60_000, key: 'K', text: `note ${n}`, url: null, read: false }
-    })
-  }
-  const host = mockHost({ requests: { 'inbox.list': () => many } })
+test('asks the worker for the newest messages, and Show more asks for more', async () => {
+  const all: InboxMessage[] = Array.from({ length: 45 }, (_, i) => {
+    const n = String(i + 1).padStart(2, '0')
+    return { id: `m${n}`, at: Date.now() - (i + 1) * 60_000, key: 'K', text: `note ${n}`, url: null, read: false }
+  })
+  const asked: unknown[] = []
+  const host = mockHost({
+    requests: {
+      'inbox.list': (input) => {
+        asked.push(input)
+        return { ...withMessages(all), messages: all.slice(0, (input as { unread: number }).unread) }
+      }
+    }
+  })
   const view = await mount(panel, { host })
   try {
     const shown = () => view.findAll({ text: /^K note \d\d/ }).length
     assert.equal(shown(), 20)
     assert.ok(view.find({ text: /^K note 20/ }))
     assert.equal(view.find({ text: /^K note 21/ }), null)
+    assert.ok(view.find({ text: /^Messages \(45\)/ }))
 
     await view.press({ text: 'Show more (25 more)' })
     assert.equal(shown(), 40)
     await view.press({ text: 'Show more (5 more)' })
     assert.equal(shown(), 45)
     assert.equal(view.find({ text: /^Show more/ }), null)
+    assert.deepEqual(asked, [{ unread: 20, read: 20 }, { unread: 40, read: 20 }, { unread: 60, read: 20 }])
     assert.deepEqual(view.errors, [])
   } finally {
     await view.unmount()
@@ -135,14 +152,21 @@ test('the setup task copies the prompt and goes once handled', async () => {
 test('marks one or all messages read, and keeps the read ones under the Read tab', async () => {
   const marked: unknown[] = []
   const message = (id: string, minutesAgo: number, read: boolean) => ({ id, at: Date.now() - minutesAgo * 60_000, key: id.toUpperCase(), text: `note ${id}`, url: null, read })
-  let current: Inbox = { ...inbox('en', false), messages: [message('a', 1, false), message('b', 2, false), message('c', 3, false), message('d', 4, true)] }
+  let messages = [message('a', 1, false), message('b', 2, false), message('c', 3, false), message('d', 4, true)]
+  const newestUnreadAfterA = messages[1].at
   const host = mockHost({
     requests: {
-      'inbox.list': () => current,
+      'inbox.list': () => withMessages(messages),
       'inbox.read': (input) => {
         marked.push(input)
         const ids = new Set((input as { ids: string[] }).ids)
-        current = { ...current, messages: current.messages.map((m) => (ids.has(m.id) ? { ...m, read: true } : m)) }
+        messages = messages.map((m) => (ids.has(m.id) ? { ...m, read: true } : m))
+        return { ok: true }
+      },
+      'inbox.readAll': (input) => {
+        marked.push(input)
+        const { through } = input as { through: number }
+        messages = messages.map((m) => (m.at <= through ? { ...m, read: true } : m))
         return { ok: true }
       }
     }
@@ -159,12 +183,45 @@ test('marks one or all messages read, and keeps the read ones under the Read tab
     assert.ok(view.find({ text: /^Messages \(2\)/ }))
     assert.deepEqual(tabs(), ['Unread (2)', 'Read (2)'])
 
+    // the newest unread one bounds it: messages behind Show more go too, ones that arrive later do not
     await view.press({ text: 'Mark all read' })
-    assert.deepEqual(marked[1], { ids: ['b', 'c'] })
+    assert.deepEqual(marked[1], { through: newestUnreadAfterA })
     assert.ok(view.find({ text: /^Messages \(0\)/ }))
     assert.ok(view.find({ text: 'No unread messages' }))
     assert.deepEqual(tabs(), ['Unread (0)', 'Read (4)'])
     assert.equal(view.find({ text: 'Mark all read' }), null)
+    assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('a message counts as read once its link opened, and a link Orca refuses says why', async () => {
+  const marked: unknown[] = []
+  const message = (id: string, url: string) => ({ id, at: Date.now() - 60_000, key: id.toUpperCase(), text: `note ${id}`, url, read: false })
+  const host = mockHost({
+    results: {
+      'shell.openExternal': ({ url }: { url: string }) => {
+        if (!url.startsWith('https:')) throw hostError('invalid_params')
+        return { opened: true }
+      }
+    },
+    requests: {
+      'inbox.list': () => withMessages([message('web', 'https://ci/1'), message('file', 'file:///etc/hosts')]),
+      'inbox.read': (input) => {
+        marked.push(input)
+        return { ok: true }
+      }
+    }
+  })
+  const view = await mount(panel, { host })
+  try {
+    const [web, file] = view.findAll({ type: 'Link', text: 'Open link' })
+    await view.press(web)
+    assert.deepEqual(marked, [{ ids: ['web'] }])
+    await view.press(file)
+    assert.deepEqual(marked, [{ ids: ['web'] }])
+    assert.ok(view.find({ text: /^Could not open the link: / }))
     assert.deepEqual(view.errors, [])
   } finally {
     await view.unmount()
@@ -244,6 +301,9 @@ test('Add a point, Align and Remove start an agent with a prompt, and say when n
       'Read /h/.config/agent-inbox/agent-guide.md and align my Agent Inbox points: compare the recorded points with the agent-inbox calls in my workflow, show me the differences and the point add and point remove commands that fix the records, and run them once I agree. Change no workflow files.',
       'Read /h/.config/agent-inbox/agent-guide.md and remove the Agent Inbox point build-failed (the build failed; wired in build.sh): take its call out of my workflow and run agent-inbox point remove build-failed.'
     ])
+    // the worker reads the board, then gives the agent up to a minute to start: past the 30 s default
+    const launches = host.callsOf('plugin.request').filter((call: { name: string }) => call.name === 'inbox.launch')
+    assert.deepEqual(launches.map((call: { timeoutMs?: number }) => call.timeoutMs), [120_000, 120_000, 120_000])
     assert.equal(view.find({ text: 'Select a workspace in Orca first; the agent starts there' }), null)
     await view.press({ text: 'Add a point' })
     assert.ok(view.find({ text: 'Select a workspace in Orca first; the agent starts there' }))

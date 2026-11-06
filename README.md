@@ -120,6 +120,8 @@ Orca → Settings → Plugins → Agent Inbox.
   later `ask` replaces the reason, one `resolve` clears it.
 - **The log** is JSON Lines, one object per line: `v`, `ts` (UTC ISO 8601), `kind` (`notify`, `ask` or
   `resolve`), `key`, `message`, `url`, `worktree`, `terminal`. Tools may read it; write it only through the CLI.
+  The panel shows the first 2,000 characters of a message and leaves out a link longer than 8,192; the log keeps
+  both whole.
 - **Cleanup.** The worker prunes the log under a lock folder (`<log>.lock`) that the CLI also takes to append,
   so no line is lost while it rewrites the file. A lock left by a killed process is broken after a few seconds.
 - **The points** sit beside the log (`inbox.jsonl` keeps them in `inbox.points.jsonl`), one JSON object per
@@ -156,6 +158,9 @@ orca plugin check .      # renders the panel with the real worker
 orca plugin validate .
 orca plugin dev load . --approve <fingerprint>   # Orca prints the fingerprint
 ```
+
+CI (`.github/workflows/validate.yml`) runs the same validation and tests on every push, tag and pull request,
+with Orca's own tooling from the main branch of [stablyai/orca](https://github.com/stablyai/orca).
 
 There is no build step: Orca transpiles the TypeScript when it loads. `src/protocol.ts` types the panel and
 worker contract; `src/log.ts`, `src/points.ts`, `src/config.ts` and `src/board.ts` are pure; `src/store.ts` owns

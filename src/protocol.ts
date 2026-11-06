@@ -4,6 +4,9 @@ import type { Language } from './config'
 /** The repository the panel's footer asks to star. */
 export const REPO = 'felix-lj-ct/orca-agent-inbox'
 
+/** Messages each tab of the panel shows at first, and how many more each Show more adds. */
+export const MESSAGE_PAGE = 20
+
 /** A workspace in the waiting column: `agent-inbox ask` (or the person) put it there. */
 export interface WaitingItem {
   path: string
@@ -50,7 +53,11 @@ export interface Setup {
 
 export interface Inbox {
   waiting: WaitingItem[]
+  /** The newest unread messages, then the newest read ones, as many of each as inbox.list asked for. */
   messages: InboxMessage[]
+  /** Every unread and every read message inside the retention window, shown or not. */
+  unreadCount: number
+  readCount: number
   points: WiredPoint[]
   retentionDays: number
   language: Language
@@ -68,13 +75,19 @@ export interface ActionResult {
 
 declare module 'orca' {
   interface PluginRequests {
-    'inbox.list': { output: Inbox }
+    /**
+     * How many messages of each tab to send. A request answer stops at 1 MiB, so the worker sends at most that
+     * many, cuts long texts and stops early when they would not fit.
+     */
+    'inbox.list': { input: { unread: number; read: number }; output: Inbox }
     /** Switches Orca to the terminal of the agent that asked. */
     'inbox.open': { input: { path: string; terminal: string | null }; output: ActionResult }
     /** `agent-inbox resolve`: back to the resolved column, comment cleared. */
     'inbox.resolve': { input: { path: string; key: string }; output: ActionResult }
     /** Marks messages read; they move to the read history until the retention window drops them. */
     'inbox.read': { input: { ids: string[] }; output: ActionResult }
+    /** Marks every unread message up to `through`, the newest the panel showed, read: shown or not. */
+    'inbox.readAll': { input: { through: number }; output: ActionResult }
     /** The setup task is handled; it does not come back. */
     'inbox.setupDone': { output: ActionResult }
     /** Puts text on the system clipboard, which a panel cannot reach. Fails with `no-clipboard`. */

@@ -59,6 +59,8 @@ const cover: Inbox = {
     message('m10', 2_900, 'cost-report', 'Cloud spend this week: $4,812, 3% under budget.', true),
     message('m11', 4_300, 'release-2.13.2', 'Rolled out to production; error rate unchanged.', true)
   ],
+  unreadCount: 5,
+  readCount: 6,
   points: [
     { id: 'decision-gate', kind: 'ask', key: '<ticket>', when: 'The agent stops for a decision only you can make', wiredIn: 'CLAUDE.md, "Stop for review"' },
     { id: 'prod-deploy', kind: 'ask', key: 'release-<version>', when: 'Before a production rollout', wiredIn: 'scripts/release.sh' },
@@ -84,5 +86,5 @@ export default defineCheck({
   chinese: { settings: { language: 'zh-CN' } },
   cover: { requests: { 'inbox.list': () => cover }, persisted: { plugin: { pointsOpen: true } } },
   // a shot stops at the window's height: with nothing above them, the wired points fit in one
-  'cover-points': { requests: { 'inbox.list': () => ({ ...cover, waiting: [], messages: [] }) }, persisted: { plugin: { pointsOpen: true } } }
+  'cover-points': { requests: { 'inbox.list': () => ({ ...cover, waiting: [], messages: [], unreadCount: 0, readCount: 0 }) }, persisted: { plugin: { pointsOpen: true } } }
 })

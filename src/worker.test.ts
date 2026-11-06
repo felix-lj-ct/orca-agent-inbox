@@ -91,6 +91,7 @@ test('installs, prunes, and lists what waits and the recent messages', async () 
       ['REPORT', 'report posted', null],
       ['BUILD', 'nightly build failed', 'https://ci/1']
     ])
+    assert.deepEqual([inbox.unreadCount, inbox.readCount], [2, 0])
     assert.deepEqual(inbox.points, [{ id: 'build', kind: 'notify', key: 'BUILD', when: 'the nightly build failed', wiredIn: 'build.sh' }])
     assert.equal(inbox.retentionDays, 7)
     assert.deepEqual(inbox.setup, {
@@ -117,7 +118,8 @@ test('read marks messages read and keeps listing them; open switches to the term
     assert.deepEqual(before.messages.map((m) => [m.key, m.read]), [['REPORT', false], ['BUILD', false]])
     assert.deepEqual(await worker.request('inbox.read', { ids: [before.messages[0].id] }), { ok: true })
     const after = await worker.request('inbox.list')
-    assert.deepEqual(after.messages.map((m) => [m.key, m.read]), [['REPORT', true], ['BUILD', false]])
+    // unread first, then read, each newest first
+    assert.deepEqual(after.messages.map((m) => [m.key, m.read]), [['BUILD', false], ['REPORT', true]])
     await worker.request('inbox.read', { ids: after.messages.map((m) => m.id) })
     assert.deepEqual((await worker.request('inbox.list')).messages.map((m) => m.read), [true, true])
 
@@ -158,6 +160,72 @@ test('messages hidden before read and unread existed count as read', async () =>
     const stored = host.data().storage
     assert.deepEqual([...(stored.read as string[])].sort(), [...ids].sort())
     assert.equal('dismissed' in stored, false)
+    await worker.deactivate()
+  })
+})
+
+test('read ids stored before 0.1.2, the message text itself, still count', async () => {
+  const { home, orca, logPath } = sandbox()
+  const build = readEntries(logPath).find((e) => e.key === 'BUILD')
+  await withHome(home, async () => {
+    const host = mockHost({ settings: { logPath, orcaCli: orca }, storage: { read: [`${build?.at}|BUILD|nightly build failed`] } })
+    const worker = await mountWorker(main, { host })
+    const inbox = await worker.request('inbox.list')
+    assert.deepEqual(inbox.messages.map((m) => [m.key, m.read]), [['REPORT', false], ['BUILD', true]])
+    assert.ok(inbox.messages.every((m) => /^[0-9a-f]{16}$/.test(m.id)))
+    // the next read stores them as they are now
+    await worker.request('inbox.read', { ids: [inbox.messages[0].id] })
+    assert.deepEqual([...(host.data().storage.read as string[])].sort(), inbox.messages.map((m) => m.id).sort())
+    await worker.deactivate()
+  })
+})
+
+test('sends as many messages of each tab as asked, and Mark all read reaches the ones not sent', async () => {
+  const { home, orca, logPath } = sandbox()
+  const now = Date.now()
+  const notify = (minutesAgo: number, key: string) =>
+    JSON.stringify({ v: 1, ts: new Date(now - minutesAgo * 60_000).toISOString(), kind: 'notify', key, message: `note ${key}`, url: null, worktree: null, terminal: null })
+  writeFileSync(logPath, Array.from({ length: 30 }, (_, i) => notify(30 - i, `N${String(i + 1).padStart(2, '0')}`)).join('\n') + '\n')
+  await withHome(home, async () => {
+    const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
+    const first = await worker.request('inbox.list', { unread: 5, read: 5 })
+    assert.deepEqual(first.messages.map((m) => m.key), ['N30', 'N29', 'N28', 'N27', 'N26'])
+    assert.deepEqual([first.unreadCount, first.readCount], [30, 0])
+
+    // N31 arrives after the panel drew N30: Mark all read leaves it unread
+    writeFileSync(logPath, `${readFileSync(logPath, 'utf8')}${notify(0, 'N31')}\n`)
+    assert.deepEqual(await worker.request('inbox.readAll', { through: first.messages[0].at }), { ok: true })
+    const after = await worker.request('inbox.list', { unread: 5, read: 3 })
+    assert.deepEqual([after.unreadCount, after.readCount], [1, 30])
+    assert.deepEqual(after.messages.map((m) => [m.key, m.read]), [['N31', false], ['N30', true], ['N29', true], ['N28', true]])
+    await worker.deactivate()
+  })
+})
+
+test('cuts long texts and leaves out long links, and stops before the answer would pass 1 MiB', async () => {
+  const { home, orca, logPath } = sandbox()
+  const now = Date.now()
+  const notify = (i: number, message: string, url: string | null = null) =>
+    JSON.stringify({ v: 1, ts: new Date(now - (i + 1) * 1000).toISOString(), kind: 'notify', key: `K${i}`, message, url, worktree: null, terminal: null })
+  writeFileSync(
+    logPath,
+    [
+      notify(0, 'x'.repeat(5_000), `https://ci/${'q'.repeat(9_000)}`),
+      // 2,000 Chinese characters: 6 KB a message as UTF-8
+      ...Array.from({ length: 400 }, (_, i) => notify(i + 1, '长'.repeat(3_000)))
+    ]
+      .reverse()
+      .join('\n') + '\n'
+  )
+  await withHome(home, async () => {
+    const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
+    const inbox = await worker.request('inbox.list', { unread: 1_000, read: 0 })
+    const [long] = inbox.messages
+    assert.equal(long.text, `${'x'.repeat(2_000)}…`)
+    assert.equal(long.url, null)
+    assert.equal(inbox.unreadCount, 401)
+    assert.ok(inbox.messages.length < 401)
+    assert.ok(Buffer.byteLength(JSON.stringify(inbox)) < 1024 * 1024)
     await worker.deactivate()
   })
 })
