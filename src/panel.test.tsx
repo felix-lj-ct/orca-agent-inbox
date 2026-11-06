@@ -68,7 +68,8 @@ test('speaks Chinese when set, and explains a workspace without a terminal', asy
   const view = await mount(panel, { host })
   try {
     assert.ok(view.find({ text: /^等你处理（1）/ }))
-    assert.ok(view.find({ text: /^消息（1）/ }))
+    assert.ok(view.find({ type: 'Collapsible', label: '消息（1）' }))
+    assert.ok(view.find({ type: 'Text', text: '近 7 天' }))
     assert.ok(view.find({ type: 'Button', text: '在 GitHub 点 Star' }))
     await view.press({ text: '去处理' })
     assert.ok(view.find({ text: '这个工作区没有打开的终端，请从侧边栏打开它' }))
@@ -174,9 +175,18 @@ test('marks one or all messages read, and keeps the read ones under the Read tab
   const view = await mount(panel, { host })
   try {
     const tabs = () => view.findAll({ type: 'Tab' }).map((e) => e.label)
-    assert.ok(view.find({ text: /^Messages \(3\)/ }))
+    assert.ok(view.find({ type: 'Collapsible', label: 'Messages (3)' }))
+    assert.ok(view.find({ type: 'Text', text: 'Last 7 days' }))
     assert.deepEqual(tabs(), ['Unread (3)', 'Read (1)'])
     assert.equal(view.findAll({ text: 'Mark read' }).length, 3)
+
+    // Mark all read sits in the tab bar of Unread only
+    await view.select({ type: 'Tabs' }, 'read')
+    assert.ok(view.find({ text: /^D note d/ }))
+    assert.equal(view.find({ text: /^A note a/ }), null)
+    assert.equal(view.find({ text: 'Mark all read' }), null)
+    await view.select({ type: 'Tabs' }, 'unread')
+    assert.ok(view.find({ text: 'Mark all read' }))
 
     await view.press({ text: 'Mark read' })
     assert.deepEqual(marked, [{ ids: ['a'] }])

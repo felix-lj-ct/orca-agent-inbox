@@ -25,6 +25,7 @@ import {
   Tab,
   Tabs,
   Text,
+  type OrcaNode,
   type PanelContext
 } from 'orca'
 import { strings } from './i18n'
@@ -39,6 +40,8 @@ const inbox = atom<Inbox | null>(null)
 /** The last failed request or action, shown until the next one succeeds. */
 const failure = atom<string | null>(null)
 const shownMessages = { unread: atom(MESSAGE_PAGE), history: atom(MESSAGE_PAGE) }
+const messagesOpen = atom(true)
+const messagesTab = atom<'unread' | 'read'>('unread')
 /** The setup prompt is on the clipboard. */
 const copied = atom(false)
 /** Wired points stay open or closed as the person left them; a run ends whenever another sidebar tab shows. */
@@ -228,41 +231,75 @@ function messageList(messages: InboxMessage[], total: number, list: keyof typeof
   )
 }
 
-/** Unread and Read tabs; Mark all read sits over the unread ones. */
+/**
+ * A section that opens and closes, with its note muted beside the title. Orca draws a Collapsible's title in one
+ * colour and its description on a line of its own, so the Collapsible here is only the header; the body goes
+ * under it, indented as Orca indents a Collapsible's. Both sit 8px from the top: the note lines up with the title.
+ */
+function notedSection(title: string, note: string, open: boolean, onChange: (open: boolean) => void, body: OrcaNode) {
+  return (
+    <Stack gap="none">
+      <Row align="start" gap="sm">
+        <Box shrink={false}>
+          <Collapsible title={title} open={open} onChange={onChange} />
+        </Box>
+        <Box paddingY="sm" minWidth={0}>
+          <Text muted size="sm" truncate>
+            {note}
+          </Text>
+        </Box>
+      </Row>
+      {open && (
+        <Row gap="none" align="start">
+          <Box width={24} shrink={false} />
+          <Box grow minWidth={0} gap="md">
+            {body}
+          </Box>
+        </Row>
+      )}
+    </Stack>
+  )
+}
+
+/**
+ * Unread and Read tabs, Mark all read at the end of the tab bar on Unread. Orca's Tabs take nothing beside the
+ * tab names, so the Tabs draw only the bar and the selected list goes under the row.
+ */
 function messagesSection(data: Inbox) {
   const s = t()
   const unread = data.messages.filter((m) => !m.read)
   const history = data.messages.filter((m) => m.read)
-  return (
-    <Collapsible title={s.messages(data.unreadCount)} description={s.lastDays(data.retentionDays)} defaultOpen>
-      <Tabs label={s.messagesTabs} defaultValue="unread">
-        <Tab value="unread" label={s.unreadTab(data.unreadCount)}>
-          {unread.length === 0 ? (
-            <Text muted size="sm">
-              {s.noUnread}
-            </Text>
-          ) : (
-            <Stack gap="md">
-              <Row justify="end">
-                <Button size="sm" variant="outline" icon="check" onPress={() => markAllRead(unread[0])}>
-                  {s.markAllRead}
-                </Button>
-              </Row>
-              {messageList(unread, data.unreadCount, 'unread')}
-            </Stack>
-          )}
-        </Tab>
-        <Tab value="read" label={s.readTab(data.readCount)}>
-          {history.length === 0 ? (
-            <Text muted size="sm">
-              {s.noRead}
-            </Text>
-          ) : (
-            messageList(history, data.readCount, 'history')
-          )}
-        </Tab>
-      </Tabs>
-    </Collapsible>
+  const tab = read(messagesTab)
+  const empty = (text: string) => (
+    <Text muted size="sm">
+      {text}
+    </Text>
+  )
+  return notedSection(
+    s.messages(data.unreadCount),
+    s.lastDays(data.retentionDays),
+    read(messagesOpen),
+    (open) => set(messagesOpen, open),
+    <>
+      <Row justify="between" align="start" gap="sm" wrap>
+        <Tabs label={s.messagesTabs} value={tab} onChange={(value) => set(messagesTab, value === 'read' ? 'read' : 'unread')}>
+          <Tab value="unread" label={s.unreadTab(data.unreadCount)} />
+          <Tab value="read" label={s.readTab(data.readCount)} />
+        </Tabs>
+        {tab === 'unread' && unread.length > 0 && (
+          <Button size="sm" variant="outline" icon="check" onPress={() => markAllRead(unread[0])}>
+            {s.markAllRead}
+          </Button>
+        )}
+      </Row>
+      {tab === 'unread'
+        ? unread.length === 0
+          ? empty(s.noUnread)
+          : messageList(unread, data.unreadCount, 'unread')
+        : history.length === 0
+          ? empty(s.noRead)
+          : messageList(history, data.readCount, 'history')}
+    </>
   )
 }
 
@@ -294,26 +331,28 @@ function pointRow(p: WiredPoint, guide: string) {
 function pointsSection(points: WiredPoint[], guide: string) {
   const s = t()
   const ordered = [...points.filter((p) => p.kind === 'ask'), ...points.filter((p) => p.kind === 'notify')]
-  return (
-    <Collapsible title={s.points(points.length)} description={s.pointsDescription} open={read(pointsOpen)} onChange={(open) => set(pointsOpen, open)}>
-      <Stack gap="md">
-        <Row gap="sm">
-          <Button size="sm" variant="solid" tone="accent" icon="add" tooltip={s.addPointTip} onPress={() => launch(s.addPointPrompt(guide))}>
-            {s.addPoint}
-          </Button>
-          <Button size="sm" variant="outline" icon="search" tooltip={s.alignPointsTip} onPress={() => launch(s.alignPointsPrompt(guide))}>
-            {s.alignPoints}
-          </Button>
-        </Row>
-        {points.length === 0 ? (
-          <Text muted size="sm">
-            {s.noPoints}
-          </Text>
-        ) : (
-          ordered.map((p) => pointRow(p, guide))
-        )}
-      </Stack>
-    </Collapsible>
+  return notedSection(
+    s.points(points.length),
+    s.pointsDescription,
+    read(pointsOpen),
+    (open) => set(pointsOpen, open),
+    <>
+      <Row gap="sm">
+        <Button size="sm" variant="solid" tone="accent" icon="add" tooltip={s.addPointTip} onPress={() => launch(s.addPointPrompt(guide))}>
+          {s.addPoint}
+        </Button>
+        <Button size="sm" variant="outline" icon="search" tooltip={s.alignPointsTip} onPress={() => launch(s.alignPointsPrompt(guide))}>
+          {s.alignPoints}
+        </Button>
+      </Row>
+      {points.length === 0 ? (
+        <Text muted size="sm">
+          {s.noPoints}
+        </Text>
+      ) : (
+        ordered.map((p) => pointRow(p, guide))
+      )}
+    </>
   )
 }
 
