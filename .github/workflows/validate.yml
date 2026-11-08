@@ -1,7 +1,7 @@
 # The checks Orca runs on this plugin, with Orca's own tooling from stablyai/orca: the strict manifest
 # validation the plugin directory and the catalogs run (`pnpm validate:plugin`, the same checks as
-# `orca plugin validate`), then the unit tests the way `orca plugin test` runs them. Orca's main branch,
-# so a rule Orca adds fails here before the indexer refuses a release tag.
+# `orca plugin validate`), then the unit tests the way `orca plugin test` runs them, on Linux and on Windows.
+# Orca's main branch, so a rule Orca adds fails here before the indexer refuses a release tag.
 name: Validate
 
 on:
@@ -16,10 +16,19 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: validate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     env:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+    defaults:
+      run:
+        # Git Bash on Windows
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -39,11 +48,14 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build:packages
       - name: Validate the plugin
+        if: runner.os == 'Linux'
         working-directory: orca
         run: pnpm validate:plugin "$GITHUB_WORKSPACE/plugin"
       - name: Unit tests
         working-directory: plugin
-        run: >-
-          ORCA_PLUGIN_TEST_ROOT="$PWD" node --enable-source-maps
-          --import "$GITHUB_WORKSPACE/orca/resources/plugins/declarative/orca-test-register.mjs"
-          --test src/*.test.ts src/*.test.tsx
+        # Paths as Node writes them: Git Bash's $PWD is /d/a/..., and --import takes a URL, where a bare D:\
+        # path reads as the scheme d:
+        run: |
+          root=$(node -p 'process.cwd()')
+          register=$(node -p 'require("node:url").pathToFileURL(process.argv[1]).href' "$GITHUB_WORKSPACE/orca/resources/plugins/declarative/orca-test-register.mjs")
+          ORCA_PLUGIN_TEST_ROOT="$root" node --enable-source-maps --import "$register" --test src/*.test.ts src/*.test.tsx

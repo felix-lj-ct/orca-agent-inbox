@@ -5,6 +5,7 @@
 // Asks and resolves always carry the workspace path; a workspace has one waiting state, so a resolve
 // closes every ask before it in the same workspace.
 import { createHash } from 'node:crypto'
+import { win32 } from 'node:path'
 
 export type EntryKind = 'notify' | 'ask' | 'resolve'
 
@@ -51,13 +52,24 @@ export function parseLog(text: string): Entry[] {
   return text.split('\n').flatMap((raw) => parseLine(raw) ?? [])
 }
 
-/** Per workspace path, its last ask that no later resolve closed. */
+/**
+ * A workspace path as a map key. Windows paths name the same folder with either slash, in any case and with or
+ * without a separator at the end, and Git there reports C:/a/b where Orca has C:\a\b.
+ */
+export function pathKey(path: string, platform: string = process.platform): string {
+  if (platform !== 'win32') return path
+  const normal = win32.normalize(path)
+  // a drive's root keeps its separator
+  return (normal.length > 3 ? normal.replace(/\\+$/, '') : normal).toLowerCase()
+}
+
+/** Per workspace path (see pathKey), its last ask that no later resolve closed. */
 export function openAsks(entries: Entry[]): Map<string, Entry> {
   const open = new Map<string, Entry>()
   for (const entry of entries) {
     if (!entry.worktree) continue
-    if (entry.kind === 'ask') open.set(entry.worktree, entry)
-    else if (entry.kind === 'resolve') open.delete(entry.worktree)
+    if (entry.kind === 'ask') open.set(pathKey(entry.worktree), entry)
+    else if (entry.kind === 'resolve') open.delete(pathKey(entry.worktree))
   }
   return open
 }

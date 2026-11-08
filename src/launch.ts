@@ -7,9 +7,16 @@ import { join } from 'node:path'
 
 export const FALLBACK_AGENT = 'claude'
 
-/** Orca's own data folder (Electron's userData for the app name "orca"). */
+/** node:sqlite, read field by field */
+type Raw = any
+
+/**
+ * Orca's own data folder (Electron's userData for the app name "orca"). On Windows it is in the roaming AppData
+ * folder; Orca does not pass APPDATA to plugin workers, so that comes from the home folder there.
+ */
 export function orcaDataDir(home: string, platform: string, env: Record<string, string | undefined> = {}): string {
   if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'orca')
+  if (platform === 'win32') return join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'orca')
   return join(env.XDG_CONFIG_HOME || join(home, '.config'), 'orca')
 }
 
@@ -28,8 +35,28 @@ export function activeProfileDir(dataDir: string): string {
 const agentId = (value: unknown) => (typeof value === 'string' && /^[\w.-]{1,64}$/.test(value.trim()) ? value.trim() : null)
 
 /**
- * Orca's default agent. `query` runs the sqlite3 CLI on the database read-only and returns what it printed;
- * it throws when sqlite3 is missing or the database cannot be read, which falls through to the next source.
+ * The first value of the first row sql selects, read-only, as text; '' when there is no row. Through node:sqlite,
+ * which Orca's runtime has; null when the runtime lacks it.
+ */
+export async function sqliteValue(db: string, sql: string): Promise<string | null> {
+  let sqlite: { DatabaseSync: new (path: string, options: { readOnly: boolean }) => Raw }
+  try {
+    sqlite = await import('node:sqlite')
+  } catch {
+    return null
+  }
+  const database = new sqlite.DatabaseSync(db, { readOnly: true })
+  try {
+    const row = database.prepare(sql).get()
+    return row ? String(Object.values(row)[0] ?? '') : ''
+  } finally {
+    database.close()
+  }
+}
+
+/**
+ * Orca's default agent. `query` reads the database read-only (sqliteValue, else the sqlite3 CLI) and returns
+ * the value; it throws when the database cannot be read, which falls through to the next source.
  */
 export async function defaultAgent(profileDir: string, query: (db: string, sql: string) => Promise<string>): Promise<string> {
   const db = join(profileDir, 'profile-state.db')

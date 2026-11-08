@@ -1,4 +1,4 @@
-// install and prune on a temporary home, and the real CLI (cli/agent-inbox.sh) against a fake orca CLI.
+// install and prune on a temporary home, and the real CLI (cli/agent-inbox.mjs) against a fake orca CLI.
 import { assert, test } from 'orca/testing'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
@@ -6,82 +6,136 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readConfig } from './config'
+import { fakeOrca } from './fake-orca'
 import { parseLog } from './log'
-import { install, prune, readEntries, readPoints } from './store'
+import { cliPath, cmdLauncher, install, prune, readEntries, readPoints, shLauncher } from './store'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const CLI = join(ROOT, 'cli', 'agent-inbox.sh')
+const CLI = join(ROOT, 'cli', 'agent-inbox.mjs')
 const DAY = 24 * 3600 * 1000
+const WINDOWS = process.platform === 'win32'
+
+type Run = { code: number; stdout: string; stderr: string }
+const ran = (resolve: (run: Run) => void) => (error: (Error & { code?: unknown }) | null, stdout: string, stderr: string) =>
+  resolve({ code: error ? Number(error.code) : 0, stdout, stderr })
 
 /** A home with a fake orca CLI that records its calls and reports the workspace in `status`. */
 function sandbox(status = 'in-review') {
-  // the real path: git reports the workspace without symlinks (macOS /var is /private/var)
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'agent-inbox-')))
-  const orca = join(home, 'fake-orca')
-  writeFileSync(
-    orca,
-    `#!/bin/bash
-echo "$*" >> "${home}/orca-calls"
-case "$1 $2" in
-  "worktree show") printf '{\\n  "ok": true,\\n  "result": { "worktree": { "workspaceStatus": "${status}" } }\\n}\\n' ;;
-  *) echo '{"ok":true,"result":{}}' ;;
-esac
-`,
-    { mode: 0o755 }
-  )
+  // the real path: git reports the workspace without symlinks (macOS /var is /private/var) or Windows short names
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'agent-inbox-')))
+  const orca = fakeOrca(home)
+  orca.answer('worktree show', { worktree: { workspaceStatus: status } })
   const workspace = join(home, 'workspace')
   mkdirSync(workspace)
   // the CLI finds the workspace as the Git top level of the current directory
   execFileSync('git', ['init', '-q', workspace])
   const config = readConfig({ logPath: '~/state/inbox.jsonl' }, home)
-  const calls = () => (existsSync(join(home, 'orca-calls')) ? readFileSync(join(home, 'orca-calls'), 'utf8').trim().split('\n') : [])
+  // what the person's environment holds about Agent Inbox and Orca stays out
+  const base = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(AGENT_INBOX_|ORCA_|NODE_OPTIONS$)/i.test(name)))
+  const env = (extra: Record<string, string> = {}) => ({ ...base, HOME: home, USERPROFILE: home, NODE_OPTIONS: orca.nodeOptions, ...extra })
   const cli = (...args: string[]) =>
-    new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-      execFile(
-        '/bin/bash',
-        [CLI, ...args],
-        { cwd: workspace, env: { HOME: home, PATH: '/usr/bin:/bin', AGENT_INBOX_ORCA: orca, ORCA_TERMINAL_HANDLE: 'term_1' } },
-        (error, stdout, stderr) => resolve({ code: error ? Number(error.code) : 0, stdout, stderr })
-      )
+    new Promise<Run>((resolve) =>
+      execFile(process.execPath, [CLI, ...args], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_1' }) }, ran(resolve))
+    )
+  /** The CLI as installed, through its launcher: agent-inbox.cmd on Windows, agent-inbox elsewhere. */
+  const installed = (...args: string[]) =>
+    new Promise<Run>((resolve) => {
+      if (!WINDOWS) return execFile(cliPath(home), args, { cwd: workspace, env: env() }, ran(resolve))
+      // the line as cmd gets it from PowerShell; /s keeps its quotes, also around a path with spaces
+      const line = [cliPath(home), ...args].map((a) => (/[\s"]/.test(a) ? `"${a}"` : a)).join(' ')
+      execFile('cmd.exe', ['/d', '/s', '/c', `"${line}"`], { cwd: workspace, env: env(), windowsVerbatimArguments: true }, ran(resolve))
     })
-  return { home, workspace, config, calls, cli }
+  return { home, workspace, config, calls: orca.calls, cli, installed, env }
 }
 
-test('install puts the CLI, config.env and the guide where agents find them', () => {
+test('install puts the CLI with its launchers, config.json and the guide where agents find them', () => {
   const { home, config } = sandbox()
+  const dir = join(home, '.config', 'agent-inbox')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'config.env'), "AGENT_INBOX_LOG='/old'\n")
   const setup = install(config, home, ROOT)
-  assert.equal(setup.cli, join(home, '.config/agent-inbox/bin/agent-inbox'))
-  assert.equal(statSync(setup.cli).mode & 0o777, 0o755)
-  assert.equal(readFileSync(setup.cli, 'utf8'), readFileSync(CLI, 'utf8'))
-  assert.match(readFileSync(join(home, '.config/agent-inbox/config.env'), 'utf8'), /AGENT_INBOX_LOG='.*\/state\/inbox\.jsonl'/)
+  assert.equal(setup.cli, join(dir, 'bin', WINDOWS ? 'agent-inbox.cmd' : 'agent-inbox'))
+  assert.ok(existsSync(setup.cli))
+  assert.equal(readFileSync(join(dir, 'lib', 'agent-inbox.mjs'), 'utf8'), readFileSync(CLI, 'utf8'))
+  if (!WINDOWS) assert.equal(statSync(join(dir, 'bin', 'agent-inbox')).mode & 0o777, 0o755)
+  assert.equal(existsSync(join(dir, 'bin', 'agent-inbox.cmd')), WINDOWS)
+  assert.equal(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')).log, join(home, 'state', 'inbox.jsonl'))
+  assert.equal(existsSync(join(dir, 'config.env')), false)
   assert.match(readFileSync(setup.guide, 'utf8'), /^---\nname: agent-inbox\n/)
   assert.ok(existsSync(dirname(config.logPath)))
 })
 
-test('the installed CLI follows the settings in config.env', async () => {
-  const { home, config, workspace, cli } = sandbox()
+test('the launchers run the CLI on the runtime that installed them, else on node', () => {
+  const sh = shLauncher('/Applications/Orca.app/Contents/MacOS/Orca', "/Users/o'neil/.config/agent-inbox/lib/agent-inbox.mjs", 'darwin')
+  assert.match(sh, /^#!\/bin\/sh\n/)
+  assert.match(sh, /^rt='\/Applications\/Orca\.app\/Contents\/MacOS\/Orca'$/m)
+  assert.match(sh, /^ELECTRON_RUN_AS_NODE=1 exec "\$rt" '\/Users\/o'\\''neil\/\.config\/agent-inbox\/lib\/agent-inbox\.mjs' "\$@"$/m)
+  assert.doesNotMatch(sh, /MSYS2_ARG_CONV_EXCL/)
+
+  // Git Bash on Windows: forward slashes, and the arguments as given
+  const gitBash = shLauncher('C:\\Users\\me\\AppData\\Local\\Programs\\Orca\\Orca.exe', 'C:\\Users\\me\\.config\\agent-inbox\\lib\\agent-inbox.mjs', 'win32')
+  assert.match(gitBash, /^rt='C:\/Users\/me\/AppData\/Local\/Programs\/Orca\/Orca\.exe'$/m)
+  assert.match(gitBash, /^export MSYS2_ARG_CONV_EXCL='\*'$/m)
+  assert.match(gitBash, /exec "\$rt" 'C:\/Users\/me\/\.config\/agent-inbox\/lib\/agent-inbox\.mjs' "\$@"$/m)
+
+  // cmd reads the file in the console's code page: no user name in it, only ASCII
+  const cmd = cmdLauncher('C:\\Users\\张三\\AppData\\Local\\Programs\\Orca\\Orca.exe', 'C:\\Users\\张三')
+  assert.ok(cmd.split('\r\n').length > 5 && !/[^\r]\n/.test(cmd), 'CRLF line ends')
+  assert.match(cmd, /^[\x00-\x7f]*$/)
+  assert.match(cmd, /^set "RT=%USERPROFILE%\\AppData\\Local\\Programs\\Orca\\Orca\.exe"\r$/m)
+  assert.match(cmd, /^"%RT%" "%~dp0\.\.\\lib\\agent-inbox\.mjs" %\*\r$/m)
+  assert.match(cmd, /^set NODE_OPTIONS=\r$/m)
+  // elsewhere the runtime is written as it is, % doubled
+  assert.match(cmdLauncher('D:\\100%\\Orca\\Orca.exe', 'C:\\Users\\me'), /^set "RT=D:\\100%%\\Orca\\Orca\.exe"\r$/m)
+})
+
+test('the installed CLI follows the settings in config.json, on Orca or on node', async () => {
+  const { home, config, installed } = sandbox()
   install(config, home, ROOT)
-  const where = await new Promise<string>((resolve) =>
-    execFile(join(home, '.config/agent-inbox/bin/agent-inbox'), ['where'], { cwd: workspace, env: { HOME: home, PATH: '/usr/bin:/bin' } }, (_e, out) =>
-      resolve(out)
-    )
-  )
-  assert.match(where, new RegExp(`log +${config.logPath}`))
-  assert.equal((await cli('notify', 'K-1', 'hello')).code, 0)
+  const where = await installed('where')
+  assert.equal(where.code, 0, where.stderr)
+  assert.match(where.stdout, /^log +(.*)$/m)
+  assert.equal(/^log +(.*)$/m.exec(where.stdout)?.[1].trim(), config.logPath)
+  assert.equal((await installed('notify', 'K-1', 'hello')).code, 0)
   assert.equal(readEntries(config.logPath)[0].message, 'hello')
+
+  // an Orca that moved: the launcher falls back to node on PATH
+  install(config, home, ROOT, join(home, 'gone', 'Orca'))
+  assert.equal((await installed('notify', 'K-2', 'on node')).code, 0)
+  assert.equal(readEntries(config.logPath)[1].message, 'on node')
+})
+
+const gitBash = WINDOWS && (() => {
+  try {
+    return execFileSync('sh', ['-c', 'uname -s'], { encoding: 'utf8' }).startsWith('MINGW')
+  } catch {
+    return false
+  }
+})()
+
+test('in Git Bash the installed CLI gets its arguments as given', { skip: !gitBash }, async () => {
+  const { home, config, workspace, env } = sandbox()
+  install(config, home, ROOT)
+  const launcher = join(home, '.config', 'agent-inbox', 'bin', 'agent-inbox').replaceAll('\\', '/')
+  // Git Bash would turn /api/v1 into C:/Program Files/Git/api/v1 on the way to a Windows program
+  const run = await new Promise<Run>((resolve) =>
+    execFile('sh', [launcher, 'notify', 'K-1', '/api/v1'], { cwd: workspace, env: env() }, ran(resolve))
+  )
+  assert.equal(run.code, 0, run.stderr)
+  assert.equal(readEntries(config.logPath)[0].message, '/api/v1')
 })
 
 test('notify, ask and resolve write the log and move the workspace on the board', async () => {
   const { home, config, workspace, calls, cli } = sandbox()
   install(config, home, ROOT)
   const message = 'tab\there "quotes" back\\slash & 中文\nsecond line'
-  assert.equal((await cli('notify', 'K-1', message, 'https://example.com/1')).code, 0)
+  assert.equal((await cli('notify', 'K-1', message, 'https://example.com/1?a=1&b=2')).code, 0)
   assert.equal((await cli('ask', 'K-2', 'pick A or B')).code, 0)
   assert.equal((await cli('resolve', 'K-2')).code, 0)
   const entries = readEntries(config.logPath)
   assert.deepEqual(entries.map((e) => [e.kind, e.key]), [['notify', 'K-1'], ['ask', 'K-2'], ['resolve', 'K-2']])
   assert.equal(entries[0].message, message)
-  assert.equal(entries[0].url, 'https://example.com/1')
+  assert.equal(entries[0].url, 'https://example.com/1?a=1&b=2')
   assert.equal(entries[1].worktree, workspace)
   assert.equal(entries[1].terminal, 'term_1')
   assert.deepEqual(calls(), [
@@ -89,6 +143,17 @@ test('notify, ask and resolve write the log and move the workspace on the board'
     `worktree show --worktree path:${workspace} --json`,
     `worktree set --worktree path:${workspace} --workspace-status in-progress --comment  --json`
   ])
+  // the lines are what the shell CLI of 0.1.2 wrote, field for field
+  assert.match(readFileSync(config.logPath, 'utf8').split('\n')[1], /^\{"v":1,"ts":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","kind":"ask","key":"K-2","message":"pick A or B","url":null,"worktree":".+","terminal":"term_1"\}$/)
+})
+
+test('a worktree passed as Git Bash or Git write it on Windows is the path Orca has', { skip: !WINDOWS }, async () => {
+  const { home, config, workspace, calls, cli } = sandbox()
+  install(config, home, ROOT)
+  const gitBash = workspace.replace(/^([A-Za-z]):/, (_, drive: string) => `/${drive.toLowerCase()}`).replaceAll('\\', '/')
+  assert.equal((await cli('ask', '--worktree', gitBash, 'K-3', 'from Git Bash')).code, 0)
+  assert.equal(readEntries(config.logPath)[0].worktree, workspace)
+  assert.ok(calls()[0].startsWith(`worktree set --worktree path:${workspace} `))
 })
 
 test('point add, remove and list keep the points beside the log', async () => {
@@ -135,16 +200,17 @@ test('resolve leaves a workspace the person already moved on alone', async () =>
 })
 
 test('usage errors exit 2 and a missing orca CLI exits 3 without logging the ask', async () => {
-  const { home, config, workspace, cli } = sandbox()
+  const { home, config, workspace, cli, env } = sandbox()
   install(config, home, ROOT)
-  assert.equal((await cli('notify', 'K-1')).code, 2)
+  const notify = await cli('notify', 'K-1')
+  assert.equal(notify.code, 2)
+  assert.match(notify.stderr, /agent-inbox notify <key> <message>/)
   assert.equal((await cli('shout', 'K-1', 'x')).code, 2)
-  const missing = await new Promise<number>((resolve) =>
-    execFile('/bin/bash', [CLI, 'ask', 'K-1', 'x'], { cwd: workspace, env: { HOME: home, PATH: '/usr/bin:/bin', AGENT_INBOX_ORCA: join(home, 'nope') } }, (e) =>
-      resolve(e ? Number(e.code) : 0)
-    )
+  const missing = await new Promise<Run>((resolve) =>
+    execFile(process.execPath, [CLI, 'ask', 'K-1', 'x'], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: join(home, 'nope') }) }, ran(resolve))
   )
-  assert.equal(missing, 3)
+  assert.equal(missing.code, 3)
+  assert.match(missing.stderr, /^agent-inbox: orca worktree set failed/)
   assert.equal(readEntries(config.logPath).length, 0)
 })
 
