@@ -33,9 +33,10 @@ Check the plugin first:
 ```
 
 If this fails, the plugin is not installed or has not started yet. Tell the person and stop. On Windows this
-command runs as written in PowerShell and Git Bash; in cmd, run
-`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`. In a WSL terminal it fails because Agent Inbox
-does not support WSL yet: tell the person that, and stop.
+command runs as written in PowerShell, Git Bash and WSL; in cmd, run
+`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`. In WSL, `~/.config/agent-inbox` is a link that
+the plugin makes to the Windows folder while the distro runs and the Agent Inbox panel is open: if it is missing,
+tell the person to open the panel, or to make the link as the plugin's README says, and stop.
 
 ## What the CLI does
 
@@ -170,7 +171,7 @@ ignore its exit code.
 For a lasting condition, keep a marker file while it holds, and send again only after it cleared and came
 back.
 
-On Windows, the command above runs as written in Git Bash. In PowerShell, `|| true` does not work: call
+On Windows, the command above runs as written in Git Bash and WSL. In PowerShell, `|| true` does not work: call
 `~/.config/agent-inbox/bin/agent-inbox` inside `try { ... } catch {}`. In a `.bat` or `.cmd` script, use
 `call "%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" ... || ver >nul`: without `call` the script stops
 after it. PowerShell and cmd pass the arguments through cmd, which splits an argument without spaces at `&`, `|`,

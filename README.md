@@ -27,9 +27,9 @@ Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Wind
    not come from a catalog; press **Install**, then enable it and approve its access (see
    [Permissions](#permissions)).
 2. **Open the panel** in the right sidebar. The plugin installs the CLI at
-   `~/.config/agent-inbox/bin/agent-inbox` and a guide for agents at `~/.config/agent-inbox/agent-guide.md`.
-   **Waiting on you** shows a **Set up Agent Inbox** task.
-3. **Try it** in a terminal of any Orca workspace (on Windows, PowerShell or Git Bash):
+   `~/.config/agent-inbox/bin/agent-inbox` and a guide for agents at `~/.config/agent-inbox/agent-guide.md`
+   (on Windows, also in [WSL](#wsl)). **Waiting on you** shows a **Set up Agent Inbox** task.
+3. **Try it** in a terminal of any Orca workspace (on Windows, PowerShell, Git Bash or WSL):
 
    ```sh
    ~/.config/agent-inbox/bin/agent-inbox test           # the workspace shows under Waiting on you
@@ -81,10 +81,22 @@ commands above run as written in PowerShell and Git Bash. In cmd and in `.bat` o
 `"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd"`, with `call` in front in a script, or the script ends
 there.
 
+### WSL
+
+In a WSL terminal, `~/.config/agent-inbox` is a link to the Windows folder, so the commands above and the agent
+guide work there as written. The plugin makes the link in each WSL distro that has a workspace in Orca, while the
+distro runs and the panel is open; a folder of that name that is not a link stays as it is. The CLI runs on
+Windows through WSL's interop, on Orca's runtime, so it needs Orca where it was when it last started: it does not
+use the `node` of the distro.
+
+If `~/.config/agent-inbox` is missing in a distro, make the link yourself there:
+
+```sh
+mkdir -p ~/.config && ln -sfn "$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r')")/.config/agent-inbox" ~/.config/agent-inbox
+```
+
 ### Not supported on Windows yet
 
-- **WSL terminals.** The CLI runs in PowerShell, cmd and Git Bash, not in WSL: an agent or a script in a WSL
-  terminal cannot send to Agent Inbox.
 - **`&`, `|`, `<`, `>`, `^` and line breaks from PowerShell and cmd.** They pass the arguments through cmd, which
   splits an argument without spaces at `&`, `|`, `<`, `>` or `^` and cuts one at a line break. In PowerShell,
   quote such an argument twice, as in `'"https://ci.example.com/run?id=1&tab=log"'`. Git Bash passes them as
@@ -105,7 +117,8 @@ moves a workspace to and `resolve` moves it back to (`in-review`, `in-progress`)
 The plugin runs as a `trusted-worker`, a Node.js process with your user's access. It runs the `orca` CLI to read
 and move the board and to start your agent, reads which agent is your default from Orca's profile state, puts
 the setup prompt on the clipboard with your system's command (`pbcopy`; `wl-copy`, `xclip` or `xsel`; PowerShell's
-`Set-Clipboard` on Windows), and writes `~/.config/agent-inbox/` and the log. Its only network request is **Star on GitHub**, made through your
+`Set-Clipboard` on Windows), and writes `~/.config/agent-inbox/` and the log. On Windows it also runs `wsl.exe` to
+list the running WSL distros and link `~/.config/agent-inbox` in those with a workspace in Orca. Its only network request is **Star on GitHub**, made through your
 `gh` CLI when you press it.
 
 ## Develop
