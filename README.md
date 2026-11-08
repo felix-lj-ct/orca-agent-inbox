@@ -14,7 +14,8 @@ Agents and scripts send with one CLI, `agent-inbox`.
 
 ## Get started
 
-Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later.
+Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Windows, see
+[what it does not support yet](#not-supported-on-windows-yet).
 
 1. **Install.** In Orca, go to Settings → Plugins → **Add plugin** → **From a Git URL…**, paste
 
@@ -78,9 +79,21 @@ or runs as an AppImage and is closed, the CLI uses `node` from your `PATH`.
 On Windows, `bin` holds `agent-inbox.cmd` for PowerShell and cmd beside `agent-inbox` for Git Bash, so the
 commands above run as written in PowerShell and Git Bash. In cmd and in `.bat` or `.cmd` scripts, call
 `"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd"`, with `call` in front in a script, or the script ends
-there. PowerShell and cmd pass the arguments through cmd, which splits an argument without spaces at `&`, `|`,
-`<`, `>` or `^` and cuts one at a line break: in PowerShell, quote such an argument twice, as in
-`'"https://ci.example.com/run?id=1&tab=log"'`.
+there.
+
+### Not supported on Windows yet
+
+- **WSL terminals.** The CLI runs in PowerShell, cmd and Git Bash, not in WSL: an agent or a script in a WSL
+  terminal cannot send to Agent Inbox.
+- **`&`, `|`, `<`, `>`, `^` and line breaks from PowerShell and cmd.** They pass the arguments through cmd, which
+  splits an argument without spaces at `&`, `|`, `<`, `>` or `^` and cuts one at a line break. In PowerShell,
+  quote such an argument twice, as in `'"https://ci.example.com/run?id=1&tab=log"'`. Git Bash passes them as
+  written.
+- **An AppData folder that is not in your home folder** (folder redirection, a roaming profile on a server).
+  Orca gives plugins no `APPDATA`, so the plugin takes `%USERPROFILE%\AppData\Roaming`, and the `orca` and `gh`
+  commands it runs do not find Orca or your `gh` sign-in. **Waiting on you**, **Go to agent**, **Mark handled**,
+  **Add a point**, **Align**, **Remove** and **Star on GitHub** fail; **Messages** and the CLI in your terminals
+  work.
 
 ## Settings
 

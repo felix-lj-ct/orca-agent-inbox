@@ -34,7 +34,8 @@ Check the plugin first:
 
 If this fails, the plugin is not installed or has not started yet. Tell the person and stop. On Windows this
 command runs as written in PowerShell and Git Bash; in cmd, run
-`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`.
+`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`. In a WSL terminal it fails because Agent Inbox
+does not support WSL yet: tell the person that, and stop.
 
 ## What the CLI does
 
