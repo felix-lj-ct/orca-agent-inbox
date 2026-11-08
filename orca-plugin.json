@@ -78,7 +78,7 @@
       {
         "key": "orcaCli",
         "title": "orca command",
-        "description": "Path to the orca CLI. Leave empty to find it in the Orca app or on PATH.",
+        "description": "Path to the orca CLI (orca.exe on Windows). Leave empty to find it in the Orca app or on PATH.",
         "type": "string",
         "default": "",
         "placeholder": "/usr/local/bin/orca",

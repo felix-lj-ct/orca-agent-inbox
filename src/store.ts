@@ -2,13 +2,28 @@
 // scripts, the log, which it prunes under the same lock the CLI appends under, and the points beside it.
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { configDir, type InboxConfig, renderEnv } from './config'
+import { configDir, type InboxConfig, renderConfig } from './config'
 import { type Entry, keepLines, parseLog } from './log'
 import { parsePoints, pointsPath } from './points'
 import type { Setup, WiredPoint } from './protocol'
 
 /** The CLI breaks a lock it waited ~5 s for; one this old was left by a killed process. */
 const STALE_LOCK_MS = 10_000
+
+const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
+/** Replaces a file; on Windows a reader such as a virus scanner can hold it for a moment. */
+function replace(from: string, to: string): void {
+  for (let tries = 0; ; tries++) {
+    try {
+      return renameSync(from, to)
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? ''
+      if (tries >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(code)) throw e
+      sleep(50)
+    }
+  }
+}
 
 /** Writes a file only when its content changed, through a temporary file so a reader never sees half. */
 function writeIfChanged(path: string, content: string, mode?: number): void {
@@ -17,18 +32,83 @@ function writeIfChanged(path: string, content: string, mode?: number): void {
   const tmp = `${path}.tmp-${process.pid}`
   writeFileSync(tmp, content)
   if (mode !== undefined) chmodSync(tmp, mode)
-  renameSync(tmp, path)
+  replace(tmp, path)
+}
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
+
+/**
+ * bin/agent-inbox: runs the CLI on the runtime of the Orca that installed it, else on the first node on PATH.
+ * On Windows it serves Git Bash, which would otherwise turn arguments that look like paths into Windows paths.
+ */
+export function shLauncher(runtime: string, script: string, platform: string = process.platform): string {
+  const path = (p: string) => shellQuote(platform === 'win32' ? p.replaceAll('\\', '/') : p)
+  return [
+    '#!/bin/sh',
+    '# agent-inbox: the Agent Inbox CLI. The Agent Inbox Orca plugin writes this file whenever Orca starts it or its',
+    '# settings change: edits here are overwritten. It runs lib/agent-inbox.mjs on Orca\'s runtime, else on node.',
+    `rt=${path(runtime)}`,
+    'if [ ! -x "$rt" ]; then',
+    '  rt=$(command -v node) || { echo "agent-inbox: Orca is not where it was and node is not on PATH; open Orca to reinstall this CLI" >&2; exit 3; }',
+    'fi',
+    ...(platform === 'win32' ? ["export MSYS2_ARG_CONV_EXCL='*'"] : []),
+    // as Orca's own launcher does: Electron refuses them from another program, and says so on every call
+    'unset NODE_OPTIONS NODE_REPL_EXTERNAL_MODULE',
+    `ELECTRON_RUN_AS_NODE=1 exec "$rt" ${path(script)} "$@"`,
+    ''
+  ].join('\n')
 }
 
 /**
- * Installs the CLI, config.env and the agent guide from the plugin folder into ~/.config/agent-inbox,
- * where agents find them whatever version of the plugin is installed, and creates the log's folder.
+ * bin/agent-inbox.cmd, for PowerShell and cmd on Windows: the same as bin/agent-inbox. cmd reads it in the
+ * console's code page, not UTF-8, so it holds no user name: the CLI is found from the file's own folder (%~dp0),
+ * and a runtime in the home folder (Orca installs into AppData\Local\Programs) is written from %USERPROFILE%.
+ * CRLF, since cmd misreads labels in a file without it.
  */
-export function install(config: InboxConfig, home: string, pluginRoot: string): Setup {
+export function cmdLauncher(runtime: string, home: string): string {
+  const inHome = runtime.toLowerCase().startsWith(`${home.toLowerCase()}\\`)
+  // % would start a variable
+  const rt = inHome ? `%USERPROFILE%${runtime.slice(home.length).replaceAll('%', '%%')}` : runtime.replaceAll('%', '%%')
+  return [
+    '@echo off',
+    'rem agent-inbox: the Agent Inbox CLI. The Agent Inbox Orca plugin writes this file whenever Orca starts it or its',
+    "rem settings change: edits here are overwritten. It runs ..\\lib\\agent-inbox.mjs on Orca's runtime, else on node.",
+    'setlocal',
+    `set "RT=${rt}"`,
+    'if exist "%RT%" goto run',
+    'set "RT=node"',
+    'where node >nul 2>nul && goto run',
+    'echo agent-inbox: Orca is not where it was and node is not on PATH; open Orca to reinstall this CLI 1>&2',
+    'exit /b 3',
+    ':run',
+    'set ELECTRON_RUN_AS_NODE=1',
+    'set NODE_OPTIONS=',
+    'set NODE_REPL_EXTERNAL_MODULE=',
+    '"%RT%" "%~dp0..\\lib\\agent-inbox.mjs" %*',
+    'exit /b %ERRORLEVEL%',
+    ''
+  ].join('\r\n')
+}
+
+/** The CLI as the panel shows it: on Windows the launcher that PowerShell and cmd run. */
+export const cliPath = (home: string, platform: string = process.platform) =>
+  join(configDir(home), 'bin', platform === 'win32' ? 'agent-inbox.cmd' : 'agent-inbox')
+
+/**
+ * Installs the CLI with its launchers, config.json and the agent guide from the plugin folder into
+ * ~/.config/agent-inbox, where agents find them whatever version of the plugin is installed, and creates the
+ * log's folder. The launchers run the CLI on runtime: this worker's, which is Orca's own.
+ */
+export function install(config: InboxConfig, home: string, pluginRoot: string, runtime = process.execPath, platform = process.platform): Setup {
   const dir = configDir(home)
-  const setup: Setup = { cli: join(dir, 'bin', 'agent-inbox'), guide: join(dir, 'agent-guide.md'), log: config.logPath }
-  writeIfChanged(setup.cli, readFileSync(join(pluginRoot, 'cli', 'agent-inbox.sh'), 'utf8'), 0o755)
-  writeIfChanged(join(dir, 'config.env'), renderEnv(config))
+  const script = join(dir, 'lib', 'agent-inbox.mjs')
+  const setup: Setup = { cli: cliPath(home, platform), guide: join(dir, 'agent-guide.md'), log: config.logPath }
+  writeIfChanged(script, readFileSync(join(pluginRoot, 'cli', 'agent-inbox.mjs'), 'utf8'))
+  writeIfChanged(join(dir, 'bin', 'agent-inbox'), shLauncher(runtime, script, platform), 0o755)
+  if (platform === 'win32') writeIfChanged(join(dir, 'bin', 'agent-inbox.cmd'), cmdLauncher(runtime, home))
+  writeIfChanged(join(dir, 'config.json'), renderConfig(config))
+  // the settings file of the shell CLI up to 0.1.2
+  rmSync(join(dir, 'config.env'), { force: true })
   writeIfChanged(setup.guide, readFileSync(join(pluginRoot, 'guide', 'agent-guide.md'), 'utf8'))
   mkdirSync(dirname(config.logPath), { recursive: true })
   return setup
@@ -64,7 +144,7 @@ export function prune(config: InboxConfig, now = Date.now()): number {
     if (kept.length === lines.length) return 0
     const tmp = `${config.logPath}.tmp-${process.pid}`
     writeFileSync(tmp, kept.map((line) => `${line}\n`).join(''))
-    renameSync(tmp, config.logPath)
+    replace(tmp, config.logPath)
     return lines.length - kept.length
   })
   return removed ?? 0

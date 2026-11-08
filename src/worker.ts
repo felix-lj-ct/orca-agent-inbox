@@ -1,4 +1,4 @@
-// Agent Inbox's worker. On start and on every settings change it installs the CLI, config.env and the
+// Agent Inbox's worker. On start and on every settings change it installs the CLI, config.json and the
 // agent guide into ~/.config/agent-inbox and prunes the log to the retention window, then prunes again
 // every hour. It answers the panel from the log and the Orca board, which it reads through the orca CLI
 // (the host API has no board), lists the points recorded beside the log, starts the agent that adds, removes
@@ -12,14 +12,14 @@ import { basename, delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { waitingItems } from './board'
 import { configDir, type InboxConfig, readConfig } from './config'
-import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir } from './launch'
+import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir, sqliteValue } from './launch'
 import { currentId, messageId, openAsks, recentMessages } from './log'
 import { pointsPath } from './points'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup } from './protocol'
-import { install, prune, readEntries, readPoints } from './store'
+import { cliPath, install, prune, readEntries, readPoints } from './store'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const CLI = join(ROOT, 'cli', 'agent-inbox.sh')
+const CLI = join(ROOT, 'cli', 'agent-inbox.mjs')
 const PRUNE_MS = 3600_000
 /** A request answer stops at 1 MiB: the messages get half of it, the board and the points share the rest. */
 const MESSAGE_BYTES = 512 * 1024
@@ -34,10 +34,22 @@ const READ = 'read'
 const DISMISSED = 'dismissed'
 /** false while the setup task waits, true once handled; unset until the first start decides. */
 const SETUP_DONE = 'setupDone'
-/** Node has no clipboard: the first of these that runs wins. */
+const WINDOWS = process.platform === 'win32'
+/** Windows PowerShell 5.1, in every Windows since 10. */
+const POWERSHELL = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+/** Node has no clipboard: the first of these that runs wins. PowerShell reads the text as UTF-8, whatever the code page. */
 const CLIPBOARD: Record<string, string[][]> = {
   darwin: [['pbcopy']],
-  linux: [['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']]
+  linux: [['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']],
+  win32: [
+    [
+      POWERSHELL,
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      '$in = New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($in); Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString($in.ToArray()))'
+    ]
+  ]
 }
 const ORCA_APP_CLI = '/Applications/Orca.app/Contents/Resources/bin/orca'
 /** orca CLI JSON, read field by field */
@@ -65,12 +77,26 @@ function fitting(messages: InboxMessage[], bytes: number): InboxMessage[] {
   return messages
 }
 
-// The worker does not get a login shell's PATH.
-const searchPath = () => [process.env.PATH, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin'].filter(Boolean).join(delimiter)
+// The worker does not get a login shell's PATH. On Windows it gets the one Orca has.
+const searchPath = () =>
+  (WINDOWS ? [process.env.PATH] : [process.env.PATH, '/usr/local/bin', '/opt/homebrew/bin', '/usr/bin', '/bin']).filter(Boolean).join(delimiter)
 
+/**
+ * The environment of the commands the worker starts. Orca passes its workers no APPDATA or LOCALAPPDATA, which on
+ * Windows the orca CLI needs to find the running Orca and gh its sign-in: they come from the home folder, the way
+ * Orca finds them when Windows does not say.
+ */
+function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const folders = WINDOWS
+    ? { APPDATA: process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), LOCALAPPDATA: process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local') }
+    : {}
+  return { ...process.env, PATH: searchPath(), ...folders, ...extra }
+}
+
+// windowsHide: a console program started from Orca would open a console window of its own
 function run(file: string, args: string[], env: Record<string, string> = {}, timeout = 20_000): Promise<string> {
   return new Promise((resolve, reject) => {
-    const options = { env: { ...process.env, PATH: searchPath(), ...env }, timeout, maxBuffer: 32 * 1024 * 1024 }
+    const options = { env: childEnv(env), timeout, maxBuffer: 32 * 1024 * 1024, windowsHide: true }
     execFile(file, args, options, (error, stdout, stderr) => {
       if (error) reject(new Error(String(stderr).trim() || String(stdout).trim() || error.message))
       else resolve(String(stdout))
@@ -81,7 +107,7 @@ function run(file: string, args: string[], env: Record<string, string> = {}, tim
 /** Feeds input to a command. Waits for its exit, not its pipes: wl-copy and xclip leave a child holding them. */
 function pipeTo(file: string, args: string[], input: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env: { ...process.env, PATH: searchPath() }, stdio: ['pipe', 'ignore', 'ignore'] })
+    const child = spawn(file, args, { env: childEnv(), stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
     child.on('error', reject)
     child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${file} exited with ${code}`))))
     child.stdin.on('error', reject)
@@ -101,15 +127,25 @@ async function copyText(text: string): Promise<ActionResult> {
   return { ok: false, error: 'no-clipboard' }
 }
 
-/** The orca CLI: the setting, else the one of the running Orca, else the first on PATH. */
+// Node runs only executables directly: on Windows, orca.exe rather than the orca.cmd beside it.
+const executable = (path: string) => (WINDOWS ? path.replace(/\.(cmd|bat)$/i, '.exe') : path)
+
+/**
+ * The orca CLI: the setting, else the one of the running Orca (this worker runs on its runtime), else the first
+ * on PATH.
+ */
 function orcaCli(config: InboxConfig): string {
-  if (config.orcaCli) return config.orcaCli
+  if (config.orcaCli) return executable(config.orcaCli)
+  const name = WINDOWS ? 'orca.exe' : 'orca'
+  const runtimeDir = dirname(process.execPath)
   const candidates = [
-    process.env.ORCA_CLI_BIN_DIR && join(process.env.ORCA_CLI_BIN_DIR, 'orca'),
+    process.env.ORCA_CLI_BIN_DIR && join(process.env.ORCA_CLI_BIN_DIR, name),
+    WINDOWS && join(runtimeDir, 'resources', 'bin', name),
+    process.platform === 'darwin' && join(runtimeDir, '..', 'Resources', 'bin', name),
     ORCA_APP_CLI,
-    ...searchPath().split(delimiter).map((dir) => join(dir, 'orca'))
+    ...searchPath().split(delimiter).map((dir) => join(dir, name))
   ]
-  return candidates.find((path): path is string => Boolean(path) && existsSync(path as string)) ?? 'orca'
+  return candidates.find((path): path is string => typeof path === 'string' && existsSync(path)) ?? name
 }
 
 /** The message of the orca CLI's JSON error, else the text as it is. */
@@ -138,7 +174,7 @@ let teardown: (() => void) | null = null
 export default function activate(orca: OrcaWorkerApi): void {
   const home = homedir()
   let config = readConfig({}, home)
-  let setup: Setup = { cli: join(configDir(home), 'bin', 'agent-inbox'), guide: join(configDir(home), 'agent-guide.md'), log: config.logPath }
+  let setup: Setup = { cli: cliPath(home), guide: join(configDir(home), 'agent-guide.md'), log: config.logPath }
   let setupError: string | null = null
   let watcher: FSWatcher | null = null
   let logTimer: ReturnType<typeof setTimeout> | undefined
@@ -246,8 +282,10 @@ export default function activate(orca: OrcaWorkerApi): void {
   async function resolve(input: { path: string; key: string }): Promise<ActionResult> {
     await ready
     try {
-      // the settings as this worker has them, whether or not config.env is written yet
-      await run('/bin/bash', [CLI, 'resolve', '--worktree', input.path, input.key], {
+      // on Orca's runtime, which runs this worker; with the settings as this worker has them, whether or not
+      // config.json is written yet
+      await run(process.execPath, [CLI, 'resolve', '--worktree', input.path, input.key], {
+        ELECTRON_RUN_AS_NODE: '1',
         AGENT_INBOX_LOG: config.logPath,
         AGENT_INBOX_WAITING: config.waitingStatus,
         AGENT_INBOX_RESUME: config.resumeStatus,
@@ -294,7 +332,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       const ps = await orcaJson(config, 'worktree', 'ps', '--limit', '1000')
       const workspace = activeWorkspace(ps.worktrees ?? [])
       if (workspace === null) return { ok: false, error: 'no-workspace' }
-      const query = (db: string, sql: string) => run('sqlite3', ['-readonly', db, sql])
+      const query = async (db: string, sql: string) => (await sqliteValue(db, sql)) ?? run('sqlite3', ['-readonly', db, sql])
       const agent = await defaultAgent(activeProfileDir(orcaDataDir(home, process.platform, process.env)), query)
       await orcaJson(config, 'agent', 'launch', '--agent', agent, '--worktree', `path:${workspace}`, '--prompt', String(prompt), '--focus')
       return { ok: true }

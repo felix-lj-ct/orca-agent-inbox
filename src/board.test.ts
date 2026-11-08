@@ -54,3 +54,10 @@ test('a closed terminal falls back to the workspace terminals, and the column is
     ['working']
   )
 })
+
+test('on Windows the ask finds its workspace though Git and Orca write the path differently', { skip: process.platform !== 'win32' }, () => {
+  const board = [{ path: 'C:\\w\\asked', displayName: 'asked', repo: 'app', workspaceStatus: 'in-review', comment: '', agents: [] }]
+  const open = openAsks(parseLog(ask('P-1', 'c:/w/Asked', 'term_asker')))
+  const [item] = waitingItems(board, [{ handle: 'term_asker', tabId: 't0', leafId: 'l0', worktreePath: 'C:\\w\\asked' }], open, 'in-review')
+  assert.deepEqual([item.key, item.reason, item.terminal], ['P-1', 'P-1 needs a decision', 'term_asker'])
+})

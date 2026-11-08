@@ -32,7 +32,9 @@ Check the plugin first:
 ~/.config/agent-inbox/bin/agent-inbox where
 ```
 
-If this fails, the plugin is not installed or has not started yet. Tell the person and stop.
+If this fails, the plugin is not installed or has not started yet. Tell the person and stop. On Windows this
+command runs as written in PowerShell and Git Bash; in cmd, run
+`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`.
 
 ## What the CLI does
 
@@ -57,9 +59,10 @@ Read what exists before you ask:
   whether it is enabled, `precheck.command`, `prompt`, and workspace (`workspaceMode`, `runContext.path`).
   Read the precheck script, and find what the prompt tells the agent to report. `orca automations runs --id
   <id>` shows how often it runs, skips and fails.
-- **Other schedules and CI**: `crontab -l`, launchd agents, CI pipelines and their schedules.
-- **What already notifies**: notify wrappers, desktop notifications (`osascript`, `terminal-notifier`), mail,
-  chat webhooks, Jira or PR comments the person reads.
+- **Other schedules and CI**: `crontab -l`, launchd agents, on Windows the Task Scheduler
+  (`Get-ScheduledTask` in PowerShell, or `schtasks /query /fo list /v`), CI pipelines and their schedules.
+- **What already notifies**: notify wrappers, desktop notifications (`osascript`, `terminal-notifier`,
+  `notify-send`, PowerShell toasts such as BurntToast), mail, chat webhooks, Jira or PR comments the person reads.
 
 If the person names one workflow, read and propose for that one only.
 
@@ -166,6 +169,13 @@ ignore its exit code.
 For a lasting condition, keep a marker file while it holds, and send again only after it cleared and came
 back.
 
+On Windows, the command above runs as written in Git Bash. In PowerShell, `|| true` does not work: call
+`~/.config/agent-inbox/bin/agent-inbox` inside `try { ... } catch {}`. In a `.bat` or `.cmd` script, use
+`call "%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" ... || ver >nul`: without `call` the script stops
+after it. PowerShell and cmd pass the arguments through cmd, which splits an argument without spaces at `&`, `|`,
+`<`, `>` or `^`, and cuts one at a line break: in PowerShell, quote such an argument twice, as in
+`'"https://ci.example.com/run?id=1&tab=log"'`.
+
 **C. Automation prompt**:
 
 ```text
@@ -260,9 +270,9 @@ records.
    | A record without a call, but its key still sends | Nothing; say that the call is in a place you did not search |
 
 5. List the problems you see in the calls themselves, against the rules in sections 2 and 3: a script call
-   without `|| true`, a message longer than one line, a second channel for the same event, a secret in a
-   message, two calls for one event. Do not fix them; the person can fix them, or use **Add a point** and
-   **Remove**.
+   whose failure fails the job (no `|| true` or its equivalent), a message longer than one line, a second
+   channel for the same event, a secret in a message, two calls for one event. Do not fix them; the person can
+   fix them, or use **Add a point** and **Remove**.
 6. Show the table, the commands and the problems, and wait for the person's OK. If every record matches its
    call, say so and stop.
 7. Run the commands the person agreed to, then show `agent-inbox point list`.

@@ -3,37 +3,28 @@ import { assert, mockHost, mountWorker, test } from 'orca/testing'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { fakeOrca } from './fake-orca'
 import { orcaDataDir } from './launch'
-import { readEntries } from './store'
+import { cliPath, readEntries } from './store'
 import * as main from './worker'
 
 const DAY = 24 * 3600 * 1000
+/** pbcopy, xclip and gh are faked as shell scripts on PATH; Windows runs neither the scripts nor those commands. */
+const POSIX_ONLY = { skip: process.platform === 'win32' }
 
 function sandbox() {
-  const home = realpathSync(mkdtempSync(join(tmpdir(), 'agent-inbox-worker-')))
+  const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'agent-inbox-worker-')))
   const workspace = join(home, 'workspace')
   mkdirSync(workspace)
-  const orca = join(home, 'fake-orca')
-  writeFileSync(join(home, 'ps.json'), JSON.stringify({ ok: true, result: { worktrees: [
+  const fake = fakeOrca(home)
+  const worktrees = [
     { path: workspace, displayName: 'workspace', repo: 'app', workspaceStatus: 'in-review', comment: 'P-1: pick A or B', agents: [], isActive: true },
     { path: join(home, 'other'), displayName: 'other', repo: 'app', workspaceStatus: 'in-progress', comment: '', agents: [] }
-  ] } }))
-  writeFileSync(join(home, 'terminals.json'), JSON.stringify({ ok: true, result: { terminals: [
-    { handle: 'term_asker', tabId: 't', leafId: 'l', worktreePath: workspace }
-  ] } }))
-  writeFileSync(
-    orca,
-    `#!/bin/bash
-echo "$*" >> "${home}/orca-calls"
-case "$1 $2" in
-  "worktree ps") cat "${home}/ps.json" ;;
-  "terminal list") cat "${home}/terminals.json" ;;
-  "worktree show") echo '{"ok":true,"result":{"worktree":{"workspaceStatus":"in-review"}}}' ;;
-  *) echo '{"ok":true,"result":{}}' ;;
-esac
-`,
-    { mode: 0o755 }
-  )
+  ]
+  fake.answer('worktree ps', { worktrees })
+  fake.answer('terminal list', { terminals: [{ handle: 'term_asker', tabId: 't', leafId: 'l', worktreePath: workspace }] })
+  fake.answer('worktree show', { worktree: { workspaceStatus: 'in-review' } })
+  const orca = fake.command
   const logPath = join(home, 'state', 'inbox.jsonl')
   const now = Date.now()
   const line = (daysAgo: number, kind: string, key: string, message: string, extra: object = {}) =>
@@ -52,20 +43,36 @@ esac
     join(home, 'state', 'inbox.points.jsonl'),
     JSON.stringify({ v: 1, id: 'build', kind: 'notify', key: 'BUILD', when: 'the nightly build failed', wiredIn: 'build.sh', ts: new Date(now).toISOString() }) + '\n'
   )
-  const calls = () => (existsSync(join(home, 'orca-calls')) ? readFileSync(join(home, 'orca-calls'), 'utf8').trim().split('\n') : [])
-  return { home, workspace, orca, logPath, calls }
+  return { home, workspace, orca, logPath, calls: fake.calls, worktrees, answer: fake.answer }
 }
 
-/** Runs fn with HOME on the sandbox and without the Orca terminal of whoever runs the tests. */
+/**
+ * Runs fn with the home folder (and Orca's data folder in it) on the sandbox, the fake orca preloaded into the
+ * processes the worker starts, and without the Orca terminal of whoever runs the tests. Like Orca's workers, it
+ * gets no APPDATA or LOCALAPPDATA.
+ */
 async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
-  const previous = { HOME: process.env.HOME, ORCA_TERMINAL_HANDLE: process.env.ORCA_TERMINAL_HANDLE }
-  process.env.HOME = home
-  delete process.env.ORCA_TERMINAL_HANDLE
+  const env: Record<string, string | undefined> = {
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: undefined,
+    LOCALAPPDATA: undefined,
+    XDG_CONFIG_HOME: undefined,
+    ORCA_TERMINAL_HANDLE: undefined,
+    NODE_OPTIONS: fakeOrca(home).nodeOptions
+  }
+  const previous = Object.fromEntries(Object.keys(env).map((name) => [name, process.env[name]]))
+  const set = (values: Record<string, string | undefined>) => {
+    for (const [name, value] of Object.entries(values)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+  set(env)
   try {
     return await fn()
   } finally {
-    process.env.HOME = previous.HOME
-    if (previous.ORCA_TERMINAL_HANDLE !== undefined) process.env.ORCA_TERMINAL_HANDLE = previous.ORCA_TERMINAL_HANDLE
+    set(previous)
   }
 }
 
@@ -95,8 +102,8 @@ test('installs, prunes, and lists what waits and the recent messages', async () 
     assert.deepEqual(inbox.points, [{ id: 'build', kind: 'notify', key: 'BUILD', when: 'the nightly build failed', wiredIn: 'build.sh' }])
     assert.equal(inbox.retentionDays, 7)
     assert.deepEqual(inbox.setup, {
-      cli: join(home, '.config/agent-inbox/bin/agent-inbox'),
-      guide: join(home, '.config/agent-inbox/agent-guide.md'),
+      cli: cliPath(home),
+      guide: join(home, '.config', 'agent-inbox', 'agent-guide.md'),
       log: logPath
     })
     assert.ok(existsSync(inbox.setup.cli))
@@ -260,7 +267,7 @@ test('a first start without a log puts up the setup task, which stays gone once 
   })
 })
 
-test('copy puts the text on the system clipboard', async () => {
+test('copy puts the text on the system clipboard', POSIX_ONLY, async () => {
   const { home, orca, logPath } = sandbox()
   const bin = join(home, 'bin')
   mkdirSync(bin)
@@ -282,25 +289,23 @@ test('copy puts the text on the system clipboard', async () => {
 })
 
 test("launch starts Orca's default agent with the prompt in the selected workspace, and needs one selected", async () => {
-  const { home, orca, logPath, workspace, calls } = sandbox()
-  // the older data file is enough here; src/launch.test.ts covers profile-state.db
-  const profile = join(orcaDataDir(home, process.platform, process.env), 'profiles', 'local-default')
-  mkdirSync(profile, { recursive: true })
-  writeFileSync(join(profile, 'orca-data.json'), JSON.stringify({ settings: { defaultTuiAgent: 'codex' } }))
+  const { home, orca, logPath, workspace, calls, worktrees, answer } = sandbox()
   await withHome(home, async () => {
+    // the older data file is enough here; src/launch.test.ts covers profile-state.db
+    const profile = join(orcaDataDir(home, process.platform, process.env), 'profiles', 'local-default')
+    mkdirSync(profile, { recursive: true })
+    writeFileSync(join(profile, 'orca-data.json'), JSON.stringify({ settings: { defaultTuiAgent: 'codex' } }))
     const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
     assert.deepEqual(await worker.request('inbox.launch', { prompt: 'add a point' }), { ok: true })
     assert.ok(calls().includes(`agent launch --agent codex --worktree path:${workspace} --prompt add a point --focus --json`))
 
-    const ps = JSON.parse(readFileSync(join(home, 'ps.json'), 'utf8'))
-    ps.result.worktrees[0].isActive = false
-    writeFileSync(join(home, 'ps.json'), JSON.stringify(ps))
+    answer('worktree ps', { worktrees: worktrees.map((w) => ({ ...w, isActive: false })) })
     assert.deepEqual(await worker.request('inbox.launch', { prompt: 'add a point' }), { ok: false, error: 'no-workspace' })
     await worker.deactivate()
   })
 })
 
-test('star stars the repository through gh, and passes on why gh could not', async () => {
+test('star stars the repository through gh, and passes on why gh could not', POSIX_ONLY, async () => {
   const { home, orca, logPath } = sandbox()
   const bin = join(home, 'bin')
   mkdirSync(bin)

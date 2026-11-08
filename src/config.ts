@@ -1,5 +1,5 @@
 // The plugin's settings, read once and shared by the worker and the CLI. The worker writes them to
-// ~/.config/agent-inbox/config.env, which the CLI sources, so agents and scripts follow a change in
+// ~/.config/agent-inbox/config.json, which the CLI reads, so agents and scripts follow a change in
 // Settings without being told.
 import { join } from 'node:path'
 
@@ -28,12 +28,13 @@ export const DEFAULTS: InboxConfig = {
   orcaCli: ''
 }
 
-/** Where the worker installs what agents and scripts use: bin/agent-inbox, config.env, agent-guide.md. */
+/** Where the worker installs what agents and scripts use: bin/, lib/agent-inbox.mjs, config.json, agent-guide.md. */
 export const configDir = (home: string) => join(home, '.config', 'agent-inbox')
 
+/** ~ and what starts with ~/ (or ~\, as written on Windows) are in the home folder. */
 export function expandHome(path: string, home: string): string {
   if (path === '~') return home
-  return path.startsWith('~/') ? join(home, path.slice(2)) : path
+  return /^~[\\/]/.test(path) ? join(home, path.slice(2)) : path
 }
 
 const text = (value: unknown, fallback: string) =>
@@ -53,16 +54,14 @@ export function readConfig(raw: Record<string, unknown>, home: string): InboxCon
   }
 }
 
-const shellQuote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
-
-/** config.env: the settings the CLI needs, as shell assignments. */
-export function renderEnv(config: InboxConfig): string {
-  return [
-    '# Written by the Agent Inbox Orca plugin from its settings; edits here are overwritten.',
-    `AGENT_INBOX_LOG=${shellQuote(config.logPath)}`,
-    `AGENT_INBOX_WAITING=${shellQuote(config.waitingStatus)}`,
-    `AGENT_INBOX_RESUME=${shellQuote(config.resumeStatus)}`,
-    `AGENT_INBOX_ORCA=${shellQuote(config.orcaCli)}`,
-    ''
-  ].join('\n')
+/** config.json: the settings the CLI needs. */
+export function renderConfig(config: InboxConfig): string {
+  const settings = {
+    note: 'Written by the Agent Inbox Orca plugin from its settings; edits here are overwritten.',
+    log: config.logPath,
+    waiting: config.waitingStatus,
+    resume: config.resumeStatus,
+    orca: config.orcaCli
+  }
+  return `${JSON.stringify(settings, null, 2)}\n`
 }

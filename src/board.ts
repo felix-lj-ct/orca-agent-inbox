@@ -1,7 +1,7 @@
 // The Orca board as `orca worktree ps --json` and `orca terminal list --json` report it, turned into
 // the panel's waiting list. The board is the source of truth for what waits: dragging a card out of the
 // waiting column by hand is as good as resolving it, and one dragged in shows up with its comment.
-import type { Entry } from './log'
+import { type Entry, pathKey } from './log'
 import type { WaitingItem } from './protocol'
 
 /** orca CLI JSON, read field by field */
@@ -19,12 +19,13 @@ export function waitingItems(worktrees: Raw[], terminals: Raw[], open: Map<strin
   for (const t of terminals) {
     handles.add(t.handle)
     handleByPane.set(`${t.tabId}:${t.leafId}`, t.handle)
-    if (!firstHandleByPath.has(t.worktreePath)) firstHandleByPath.set(t.worktreePath, t.handle)
+    const path = pathKey(String(t.worktreePath ?? ''))
+    if (!firstHandleByPath.has(path)) firstHandleByPath.set(path, t.handle)
   }
   return worktrees
     .filter((w) => w.workspaceStatus === waitingStatus && !w.isArchived)
     .map((w): WaitingItem => {
-      const ask = open.get(w.path)
+      const ask = open.get(pathKey(String(w.path)))
       const key = ask?.key ?? String(w.displayName ?? '')
       const comment = String(w.comment ?? '').trim()
       // the terminal that asked, else the newest top-level agent's, else any terminal of the workspace
@@ -33,7 +34,7 @@ export function waitingItems(worktrees: Raw[], terminals: Raw[], open: Map<strin
       const terminal =
         (ask?.terminal && handles.has(ask.terminal) ? ask.terminal : null) ??
         (newest && handleByPane.get(newest.paneKey)) ??
-        firstHandleByPath.get(w.path) ??
+        firstHandleByPath.get(pathKey(String(w.path))) ??
         null
       return {
         path: w.path,

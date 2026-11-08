@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { currentId, keepLines, messageId, openAsks, parseLine, parseLog, recentMessages } from './log'
+import { currentId, keepLines, messageId, openAsks, parseLine, parseLog, pathKey, recentMessages } from './log'
 
 const DAY = 24 * 3600 * 1000
 const NOW = Date.parse('2026-11-20T12:00:00Z')
@@ -23,8 +23,18 @@ test('a resolve closes the asks before it in the same workspace only', () => {
     [line(5, 'ask', 'A', '/a'), line(4, 'ask', 'B', '/b'), line(3, 'resolve', 'A', '/a'), line(2, 'ask', 'B2', '/b')].join('\n')
   )
   const open = openAsks(entries)
-  assert.deepEqual([...open.keys()], ['/b'])
-  assert.equal(open.get('/b')?.key, 'B2')
+  assert.deepEqual([...open.keys()], [pathKey('/b')])
+  assert.equal(open.get(pathKey('/b'))?.key, 'B2')
+})
+
+test('a Windows workspace path is the same with either slash and in any case', () => {
+  assert.equal(pathKey('C:/Work/App', 'win32'), pathKey('c:\\work\\app', 'win32'))
+  assert.equal(pathKey('C:\\work\\app\\', 'win32'), pathKey('C:\\work\\app', 'win32'))
+  assert.equal(pathKey('C:\\', 'win32'), 'c:\\')
+  assert.notEqual(pathKey('C:\\work\\app', 'win32'), pathKey('C:\\work\\app2', 'win32'))
+  // elsewhere a path is itself: case matters, and a backslash is part of a name
+  assert.notEqual(pathKey('/Work/App', 'linux'), pathKey('/work/app', 'linux'))
+  assert.equal(pathKey('/w/a\\b', 'darwin'), '/w/a\\b')
 })
 
 test('prune keeps the window and every open ask however old, and drops broken lines', () => {
