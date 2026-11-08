@@ -3,7 +3,7 @@ import { assert, test } from 'orca/testing'
 import { execFile, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmdirSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readConfig } from './config'
 import { fakeOrca } from './fake-orca'
@@ -14,6 +14,8 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'cli', 'agent-inbox.mjs')
 const DAY = 24 * 3600 * 1000
 const WINDOWS = process.platform === 'win32'
+/** sh and a stand-in wslpath; Windows runs the launcher in WSL itself in src/wsl.test.ts. */
+const POSIX_ONLY = { skip: WINDOWS }
 
 type Run = { code: number; stdout: string; stderr: string }
 const ran = (resolve: (run: Run) => void) => (error: (Error & { code?: unknown }) | null, stdout: string, stderr: string) =>
@@ -33,10 +35,12 @@ function sandbox(status = 'in-review') {
   // what the person's environment holds about Agent Inbox and Orca stays out
   const base = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(AGENT_INBOX_|ORCA_|NODE_OPTIONS$)/i.test(name)))
   const env = (extra: Record<string, string> = {}) => ({ ...base, HOME: home, USERPROFILE: home, NODE_OPTIONS: orca.nodeOptions, ...extra })
-  const cli = (...args: string[]) =>
+  /** The CLI as an agent in the workspace's terminal term_1 runs it, with extra in its environment. */
+  const cliWith = (extra: Record<string, string>, ...args: string[]) =>
     new Promise<Run>((resolve) =>
-      execFile(process.execPath, [CLI, ...args], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_1' }) }, ran(resolve))
+      execFile(process.execPath, [CLI, ...args], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_1', ...extra }) }, ran(resolve))
     )
+  const cli = (...args: string[]) => cliWith({}, ...args)
   /** The CLI as installed, through its launcher: agent-inbox.cmd on Windows, agent-inbox elsewhere. */
   const installed = (...args: string[]) =>
     new Promise<Run>((resolve) => {
@@ -45,7 +49,7 @@ function sandbox(status = 'in-review') {
       const line = [cliPath(home), ...args].map((a) => (/[\s"]/.test(a) ? `"${a}"` : a)).join(' ')
       execFile('cmd.exe', ['/d', '/s', '/c', `"${line}"`], { cwd: workspace, env: env(), windowsVerbatimArguments: true }, ran(resolve))
     })
-  return { home, workspace, config, calls: orca.calls, cli, installed, env }
+  return { home, workspace, config, orca, calls: orca.calls, cli, cliWith, installed, env }
 }
 
 test('install puts the CLI with its launchers, config.json and the guide where agents find them', () => {
@@ -77,6 +81,14 @@ test('the launchers run the CLI on the runtime that installed them, else on node
   assert.match(gitBash, /^rt='C:\/Users\/me\/AppData\/Local\/Programs\/Orca\/Orca\.exe'$/m)
   assert.match(gitBash, /^export MSYS2_ARG_CONV_EXCL='\*'$/m)
   assert.match(gitBash, /exec "\$rt" 'C:\/Users\/me\/\.config\/agent-inbox\/lib\/agent-inbox\.mjs' "\$@"$/m)
+  assert.doesNotMatch(sh, /WSL/)
+
+  // WSL, through the link to this folder: the Windows runtime through interop, never WSL's node
+  assert.match(gitBash, /^if \[ -n "\$\{WSL_DISTRO_NAME:-\}" \]; then$/m)
+  assert.match(gitBash, /^  rt=\$\(wslpath -u 'C:\\Users\\me\\AppData\\Local\\Programs\\Orca\\Orca\.exe' 2>\/dev\/null\) && \[ -x "\$rt" \] \|\| \{ .*exit 3; \}$/m)
+  assert.match(gitBash, /^  export ELECTRON_RUN_AS_NODE=1 AGENT_INBOX_WSL_CWD="\$PWD" AGENT_INBOX_WSL_TOP="\$top" ORCA_CLI_CWD="\$cwd" WSLENV='[^']*ORCA_TERMINAL_HANDLE\/w[^']*'$/m)
+  // in a Windows folder: one started in a WSL folder gets a \\wsl.localhost\... path, which Node trips over
+  assert.match(gitBash, /^  cd "\$\{rt%\/\*\}"\n  exec "\$rt" 'C:\/Users\/me\/\.config\/agent-inbox\/lib\/agent-inbox\.mjs' "\$@"\nfi\nif \[ ! -x "\$rt" \]/m)
 
   // cmd reads the file in the console's code page: no user name in it, only ASCII
   const cmd = cmdLauncher('C:\\Users\\张三\\AppData\\Local\\Programs\\Orca\\Orca.exe', 'C:\\Users\\张三')
@@ -154,6 +166,69 @@ test('a worktree passed as Git Bash or Git write it on Windows is the path Orca 
   assert.equal((await cli('ask', '--worktree', gitBash, 'K-3', 'from Git Bash')).code, 0)
   assert.equal(readEntries(config.logPath)[0].worktree, workspace)
   assert.ok(calls()[0].startsWith(`worktree set --worktree path:${workspace} `))
+})
+
+test('the log has the workspace as Orca names it, when Orca says', async () => {
+  const { home, config, workspace, orca, cli } = sandbox()
+  install(config, home, ROOT)
+  orca.answer('worktree set', { worktree: { path: `${workspace}-as-orca-has-it` } })
+  assert.equal((await cli('ask', 'K-1', 'pick A or B')).code, 0)
+  assert.equal(readEntries(config.logPath)[0].worktree, `${workspace}-as-orca-has-it`)
+})
+
+test('from WSL the workspace is a Linux path for orca to resolve, and the log has the path Orca answers with', async () => {
+  const { home, config, orca, calls, cliWith } = sandbox()
+  install(config, home, ROOT)
+  const unc = '\\\\wsl.localhost\\Ubuntu\\home\\me\\app'
+  orca.answer('worktree set', { worktree: { path: unc } })
+  orca.answer('worktree show', { worktree: { path: unc, workspaceStatus: 'in-review' } })
+  // what bin/agent-inbox passes on from WSL: the directory it ran in and its Git top level
+  const wsl = { AGENT_INBOX_WSL_CWD: '/home/me/app/src', AGENT_INBOX_WSL_TOP: '/home/me/app' }
+  assert.equal((await cliWith(wsl, 'notify', 'K-1', 'built')).code, 0)
+  assert.equal((await cliWith(wsl, 'ask', 'K-2', 'pick A or B')).code, 0)
+  // a relative --worktree is relative to the directory in WSL
+  assert.equal((await cliWith(wsl, 'resolve', '--worktree', '..', 'K-2')).code, 0)
+  assert.deepEqual(readEntries(config.logPath).map((e) => [e.kind, e.worktree]), [['notify', '/home/me/app'], ['ask', unc], ['resolve', unc]])
+  assert.deepEqual(calls(), [
+    'worktree set --worktree path:/home/me/app --workspace-status in-review --comment K-2: pick A or B --unread --json',
+    'worktree show --worktree path:/home/me/app --json',
+    'worktree set --worktree path:/home/me/app --workspace-status in-progress --comment  --json'
+  ])
+
+  // outside a repository in WSL there is no workspace to ask in, whatever Git says on Windows
+  const outside = await cliWith({ AGENT_INBOX_WSL_CWD: '/tmp', AGENT_INBOX_WSL_TOP: '' }, 'ask', 'K-3', 'x')
+  assert.equal(outside.code, 2)
+  assert.match(outside.stderr, /no workspace/)
+})
+
+test('in WSL the installed CLI passes on the directory and Git top level WSL has, and never runs on its node', POSIX_ONLY, async () => {
+  const { home, config, workspace, orca, calls, env } = sandbox()
+  // the launcher Orca on Windows writes, run by a WSL whose wslpath leaves these paths as they are
+  install(config, home, ROOT, process.execPath, 'win32')
+  const bin = join(home, 'wsl-bin')
+  mkdirSync(bin)
+  writeFileSync(join(bin, 'wslpath'), '#!/bin/sh\ncase "$1" in -u|-w) shift ;; esac\nprintf "%s\\n" "$1"\n', { mode: 0o755 })
+  const src = join(workspace, 'src')
+  mkdirSync(src)
+  const wsl = { WSL_DISTRO_NAME: 'Ubuntu', PATH: `${bin}${delimiter}${process.env.PATH}`, AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_wsl' }
+  const run = (...args: string[]) =>
+    new Promise<Run>((resolve) => execFile(join(home, '.config', 'agent-inbox', 'bin', 'agent-inbox'), args, { cwd: src, env: env(wsl) }, ran(resolve)))
+
+  assert.equal((await run('ask', 'K-1', 'from WSL')).code, 0)
+  assert.equal(calls()[0], `worktree set --worktree path:${workspace} --workspace-status in-review --comment K-1: from WSL --unread --json`)
+  // orca learns the directory from ORCA_CLI_CWD, in Windows form (here wslpath leaves it as it is)
+  assert.deepEqual(orca.cliCwds(), [src])
+  assert.equal((await run('notify', '--worktree', '..', 'K-2', 'x')).code, 0)
+  const [ask, notify] = readEntries(config.logPath)
+  assert.equal(ask.terminal, 'term_wsl')
+  assert.equal(notify.worktree, workspace)
+
+  // an Orca that moved: WSL's node would not find the Windows log
+  install(config, home, ROOT, join(home, 'gone', 'Orca.exe'), 'win32')
+  const gone = await run('notify', 'K-3', 'x')
+  assert.equal(gone.code, 3)
+  assert.match(gone.stderr, /open Orca to reinstall this CLI/)
+  assert.equal(readEntries(config.logPath).length, 2)
 })
 
 test('point add, remove and list keep the points beside the log', async () => {

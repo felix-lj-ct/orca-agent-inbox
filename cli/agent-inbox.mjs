@@ -8,11 +8,15 @@
 // current directory. Settings: the environment (AGENT_INBOX_LOG, AGENT_INBOX_WAITING, AGENT_INBOX_RESUME,
 // AGENT_INBOX_ORCA), then ~/.config/agent-inbox/config.json, then the defaults below. The points are kept
 // beside the log: inbox.jsonl keeps them in inbox.points.jsonl.
+// In WSL, bin/agent-inbox runs this on Windows too, on Orca's runtime, and passes on the directory it was run in
+// (AGENT_INBOX_WSL_CWD) and its Git top level (AGENT_INBOX_WSL_TOP). Workspaces are then Linux paths, which the
+// orca CLI resolves in the distro of the directory that ORCA_CLI_CWD gives it in Windows form, the way Orca's own
+// orca command in WSL does.
 // Exit codes: 0 done, 2 usage, 3 the orca CLI is missing or failed, 4 the log stayed locked.
 import { execFileSync } from 'node:child_process'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, posix, resolve } from 'node:path'
 
 const USAGE = `  agent-inbox notify <key> <message> [<url>]
       a line in the panel's Messages: something happened, nothing waits on the person
@@ -36,6 +40,8 @@ const USAGE = `  agent-inbox notify <key> <message> [<url>]
 `
 
 const WINDOWS = process.platform === 'win32'
+/** Set when run from WSL: the Linux directory it was run in. */
+const WSL_CWD = process.env.AGENT_INBOX_WSL_CWD
 const HOME = homedir()
 const CONFIG = join(HOME, '.config', 'agent-inbox', 'config.json')
 
@@ -98,13 +104,20 @@ function findOrca() {
   return candidates.find((path) => path && runnable(path)) || null
 }
 
+/** The result the orca CLI answers with; {} when it says nothing this can read. */
 function orcaCli(...args) {
   const orca = findOrca() ?? die(3, 'orca CLI not found: set "orca command" in the Agent Inbox settings, or AGENT_INBOX_ORCA')
+  let out
   try {
-    return execFileSync(orca, [...args, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    out = execFileSync(orca, [...args, '--json'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
   } catch (e) {
-    const out = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim() || e.message
-    return die(3, `orca ${args[0]} ${args[1]} failed (is Orca running?): ${out}`)
+    const text = `${e.stdout ?? ''}${e.stderr ?? ''}`.trim() || e.message
+    return die(3, `orca ${args[0]} ${args[1]} failed (is Orca running?): ${text}`)
+  }
+  try {
+    return JSON.parse(out).result ?? {}
+  } catch {
+    return {}
   }
 }
 
@@ -207,6 +220,15 @@ function nativePath(path) {
   return resolve(path.replace(/^\/([A-Za-z])(?=\/|$)/, '$1:')).replace(/^[a-z]:/, (drive) => drive.toUpperCase())
 }
 
+/** The workspace: the one passed, else the Git top level of the current directory; '' outside one. */
+function workspacePath(wt) {
+  if (WSL_CWD) return wt ? posix.resolve(WSL_CWD, wt) : (process.env.AGENT_INBOX_WSL_TOP ?? '')
+  return nativePath(wt || gitTop())
+}
+
+/** The workspace's path as Orca has it, which the panel finds it by; from WSL, its Windows path. */
+const orcaPath = (worktree, path) => (typeof worktree?.path === 'string' && worktree.path) || path
+
 function main(argv) {
   if (argv.length < 1) usage()
   const cmd = argv.shift()
@@ -216,14 +238,14 @@ function main(argv) {
     wt = argv[1]
     argv.splice(0, 2)
   }
-  const workspace = () => nativePath(wt || gitTop()) || die(2, 'no workspace: run inside it or pass --worktree <path>')
+  const workspace = () => workspacePath(wt) || die(2, 'no workspace: run inside it or pass --worktree <path>')
   const out = (text) => process.stdout.write(text)
 
   switch (cmd) {
     case 'notify': {
       const [key, message, url = ''] = argv
       if (argv.length < 2 || !message) usage()
-      append('notify', key, message, url, nativePath(wt || gitTop()))
+      append('notify', key, message, url, workspacePath(wt))
       return out(`notify ${key}: ${message}\n`)
     }
     case 'ask':
@@ -232,19 +254,19 @@ function main(argv) {
       const [key, message, url = ''] = argv
       if (argv.length < 2 || !message) usage()
       const path = workspace()
-      orcaCli('worktree', 'set', '--worktree', `path:${path}`, '--workspace-status', WAITING, '--comment', `${key}: ${message}`, '--unread')
-      append('ask', key, message, url, path)
+      const set = orcaCli('worktree', 'set', '--worktree', `path:${path}`, '--workspace-status', WAITING, '--comment', `${key}: ${message}`, '--unread')
+      append('ask', key, message, url, orcaPath(set.worktree, path))
       return out(`ask ${key}: ${message}\n`)
     }
     case 'resolve': {
       if (argv.length < 1) usage()
       const path = workspace()
-      const shown = orcaCli('worktree', 'show', '--worktree', `path:${path}`).replace(/\s/g, '')
+      const shown = orcaCli('worktree', 'show', '--worktree', `path:${path}`).worktree
       // leave a workspace the person already moved on alone
-      if (shown.includes(`"workspaceStatus":${JSON.stringify(WAITING)}`)) {
+      if (shown?.workspaceStatus === WAITING) {
         orcaCli('worktree', 'set', '--worktree', `path:${path}`, '--workspace-status', RESUME, '--comment', '')
       }
-      append('resolve', argv[0], '', '', path)
+      append('resolve', argv[0], '', '', orcaPath(shown, path))
       return out(`resolve ${argv[0]}\n`)
     }
     case 'point': {

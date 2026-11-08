@@ -3,7 +3,8 @@
 // every hour. It answers the panel from the log and the Orca board, which it reads through the orca CLI
 // (the host API has no board), lists the points recorded beside the log, starts the agent that adds, removes
 // or aligns them, stars the repository through gh when the person asks, and tells open panels when the log or the
-// points change. Orca starts it for a panel request and stops it when idle.
+// points change. On Windows it also links ~/.config/agent-inbox in the WSL distros of the board's workspaces
+// (src/wsl.ts). Orca starts it for a panel request and stops it when idle.
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
@@ -17,10 +18,13 @@ import { currentId, messageId, openAsks, recentMessages } from './log'
 import { pointsPath } from './points'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup } from './protocol'
 import { cliPath, install, prune, readEntries, readPoints } from './store'
+import { distroNames, linkArgs, WSL_EXE, wslDistros } from './wsl'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'cli', 'agent-inbox.mjs')
 const PRUNE_MS = 3600_000
+/** A WSL distro that was not running is looked at again after this long. */
+const WSL_RETRY_MS = 300_000
 /** A request answer stops at 1 MiB: the messages get half of it, the board and the points share the rest. */
 const MESSAGE_BYTES = 512 * 1024
 /** The panel gets this much of a message's text and key; the log keeps them whole. */
@@ -209,6 +213,34 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   }
 
+  /** Per WSL distro (in lower case): true once linked, else when it was last looked at. */
+  const wslLinks = new Map<string, true | number>()
+
+  /** Links ~/.config/agent-inbox in the running WSL distros of these workspaces, once each (see src/wsl.ts). */
+  async function linkWsl(worktrees: Raw[]): Promise<void> {
+    const due = wslDistros(worktrees).filter((distro) => {
+      const state = wslLinks.get(distro.toLowerCase())
+      return state === undefined || (state !== true && Date.now() - state > WSL_RETRY_MS)
+    })
+    if (due.length === 0) return
+    for (const distro of due) wslLinks.set(distro.toLowerCase(), Date.now())
+    let running: string[] = []
+    try {
+      running = distroNames(await run(WSL_EXE, ['--list', '--running', '--quiet'], { WSL_UTF8: '1' })).map((d) => d.toLowerCase())
+    } catch {
+      // wsl.exe fails when no distro runs
+    }
+    for (const distro of due.filter((d) => running.includes(d.toLowerCase()))) {
+      wslLinks.set(distro.toLowerCase(), true)
+      try {
+        const said = (await run(WSL_EXE, linkArgs(distro, configDir(home)))).trim()
+        if (said) orca.log(`WSL ${distro}: ${said}`)
+      } catch (e) {
+        orca.log(`link ~/.config/agent-inbox in WSL ${distro}: ${errorText(e)}`)
+      }
+    }
+  }
+
   async function load(): Promise<void> {
     config = readConfig(await orca.settings.get(), home)
     try {
@@ -262,6 +294,7 @@ export default function activate(orca: OrcaWorkerApi): void {
         orcaJson(config, 'terminal', 'list', '--limit', '1000')
       ])
       const waiting = waitingItems(ps.worktrees ?? [], terms.terminals ?? [], openAsks(entries), config.waitingStatus)
+      if (WINDOWS) void linkWsl(ps.worktrees ?? [])
       return { ...base, waiting, error: setupError }
     } catch (e) {
       return { ...base, waiting: [], error: [setupError, `orca: ${errorText(e)}`].filter(Boolean).join('\n') }

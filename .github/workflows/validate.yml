@@ -1,7 +1,8 @@
 # The checks Orca runs on this plugin, with Orca's own tooling from stablyai/orca: the strict manifest
 # validation the plugin directory and the catalogs run (`pnpm validate:plugin`, the same checks as
-# `orca plugin validate`), then the unit tests the way `orca plugin test` runs them, on Linux and on Windows.
-# Orca's main branch, so a rule Orca adds fails here before the indexer refuses a release tag.
+# `orca plugin validate`), then the unit tests the way `orca plugin test` runs them, on Linux and on Windows,
+# where src/wsl.test.ts also runs the CLI in a WSL distro. Orca's main branch, so a rule Orca adds fails here
+# before the indexer refuses a release tag.
 name: Validate
 
 on:
@@ -47,12 +48,21 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm build:packages
+      - name: Install a WSL distro
+        if: runner.os == 'Windows'
+        uses: Vampire/setup-wsl@v7
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: git
       - name: Validate the plugin
         if: runner.os == 'Linux'
         working-directory: orca
         run: pnpm validate:plugin "$GITHUB_WORKSPACE/plugin"
       - name: Unit tests
         working-directory: plugin
+        env:
+          # the distro src/wsl.test.ts runs the CLI in; it changes ~/.config/agent-inbox there
+          AGENT_INBOX_TEST_WSL: ${{ runner.os == 'Windows' && 'Ubuntu-24.04' || '' }}
         # Paths as Node writes them: Git Bash's $PWD is /d/a/..., and --import takes a URL, where a bare D:\
         # path reads as the scheme d:
         run: |
