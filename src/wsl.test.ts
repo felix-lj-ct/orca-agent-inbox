@@ -144,6 +144,12 @@ test('in a WSL distro, the worker links the CLI, which asks, notifies and resolv
     assert.equal(entries[0].message, message)
     assert.equal(entries[0].url, url)
     assert.equal(entries[0].terminal, 'term_wsl')
+    // orca resolves the Linux paths in the distro it learns from ORCA_CLI_CWD, the directory in Windows form
+    // (wslpath writes the share as wsl.localhost, or as wsl$ in an older WSL)
+    const src = `${distro}${linux}/src`.replaceAll('/', '\\').toLowerCase()
+    const cwds = orca.cliCwds()
+    assert.equal(cwds.length, 3, cwds.join('\n'))
+    for (const cwd of cwds) assert.ok([`\\\\wsl.localhost\\${src}`, `\\\\wsl$\\${src}`].includes(cwd.toLowerCase()), cwd)
     // one call a line: the message's line break splits its call in two
     const calls = orca.calls().filter((c) => !/^(worktree ps|terminal list) /.test(c)).join('\n')
     assert.equal(

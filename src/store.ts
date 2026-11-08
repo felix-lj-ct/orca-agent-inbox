@@ -43,6 +43,7 @@ const WSLENV = [
   'AGENT_INBOX_WSL_CWD/w',
   'AGENT_INBOX_WSL_TOP/w',
   'ORCA_TERMINAL_HANDLE/w',
+  'ORCA_CLI_CWD/w',
   'AGENT_INBOX_LOG/p',
   'AGENT_INBOX_WAITING/w',
   'AGENT_INBOX_RESUME/w',
@@ -55,6 +56,9 @@ const WSLENV = [
  * and WSL, which reaches it through ~/.config/agent-inbox there (a link to this folder; see src/wsl.ts): there it
  * runs the CLI on Windows through WSL's interop, on Orca's runtime and never on WSL's node, since the log, the
  * settings and the orca CLI are Windows ones. The CLI gets the directory and its Git top level as WSL has them.
+ * As Orca's own orca command in WSL does, it runs the Windows side in a Windows folder (one started in a WSL folder
+ * gets a \\wsl.localhost\... path as its own, which Node trips over) and tells the orca CLI the directory in
+ * ORCA_CLI_CWD, from which it knows the distro.
  */
 export function shLauncher(runtime: string, script: string, platform: string = process.platform): string {
   const path = (p: string) => shellQuote(platform === 'win32' ? p.replaceAll('\\', '/') : p)
@@ -62,7 +66,9 @@ export function shLauncher(runtime: string, script: string, platform: string = p
     'if [ -n "${WSL_DISTRO_NAME:-}" ]; then',
     `  rt=$(wslpath -u ${shellQuote(runtime)} 2>/dev/null) && [ -x "$rt" ] || { echo "agent-inbox: Orca is not where it was; open Orca to reinstall this CLI" >&2; exit 3; }`,
     '  top=$(git rev-parse --show-toplevel 2>/dev/null) || top=',
-    `  export ELECTRON_RUN_AS_NODE=1 AGENT_INBOX_WSL_CWD="$PWD" AGENT_INBOX_WSL_TOP="$top" WSLENV='${WSLENV}'`,
+    '  cwd=$(wslpath -w "$PWD" 2>/dev/null) || cwd=',
+    `  export ELECTRON_RUN_AS_NODE=1 AGENT_INBOX_WSL_CWD="$PWD" AGENT_INBOX_WSL_TOP="$top" ORCA_CLI_CWD="$cwd" WSLENV='${WSLENV}'`,
+    '  cd "${rt%/*}"',
     `  exec "$rt" ${path(script)} "$@"`,
     'fi'
   ]

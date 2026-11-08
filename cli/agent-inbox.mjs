@@ -10,7 +10,8 @@
 // beside the log: inbox.jsonl keeps them in inbox.points.jsonl.
 // In WSL, bin/agent-inbox runs this on Windows too, on Orca's runtime, and passes on the directory it was run in
 // (AGENT_INBOX_WSL_CWD) and its Git top level (AGENT_INBOX_WSL_TOP). Workspaces are then Linux paths, which the
-// orca CLI resolves in the distro it is called from, the way Orca's own orca command in WSL does.
+// orca CLI resolves in the distro of the directory that ORCA_CLI_CWD gives it in Windows form, the way Orca's own
+// orca command in WSL does.
 // Exit codes: 0 done, 2 usage, 3 the orca CLI is missing or failed, 4 the log stayed locked.
 import { execFileSync } from 'node:child_process'
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'

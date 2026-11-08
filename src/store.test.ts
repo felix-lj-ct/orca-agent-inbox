@@ -86,8 +86,9 @@ test('the launchers run the CLI on the runtime that installed them, else on node
   // WSL, through the link to this folder: the Windows runtime through interop, never WSL's node
   assert.match(gitBash, /^if \[ -n "\$\{WSL_DISTRO_NAME:-\}" \]; then$/m)
   assert.match(gitBash, /^  rt=\$\(wslpath -u 'C:\\Users\\me\\AppData\\Local\\Programs\\Orca\\Orca\.exe' 2>\/dev\/null\) && \[ -x "\$rt" \] \|\| \{ .*exit 3; \}$/m)
-  assert.match(gitBash, /^  export ELECTRON_RUN_AS_NODE=1 AGENT_INBOX_WSL_CWD="\$PWD" AGENT_INBOX_WSL_TOP="\$top" WSLENV='[^']*ORCA_TERMINAL_HANDLE\/w[^']*'$/m)
-  assert.match(gitBash, /^  exec "\$rt" 'C:\/Users\/me\/\.config\/agent-inbox\/lib\/agent-inbox\.mjs' "\$@"\nfi\nif \[ ! -x "\$rt" \]/m)
+  assert.match(gitBash, /^  export ELECTRON_RUN_AS_NODE=1 AGENT_INBOX_WSL_CWD="\$PWD" AGENT_INBOX_WSL_TOP="\$top" ORCA_CLI_CWD="\$cwd" WSLENV='[^']*ORCA_TERMINAL_HANDLE\/w[^']*'$/m)
+  // in a Windows folder: one started in a WSL folder gets a \\wsl.localhost\... path, which Node trips over
+  assert.match(gitBash, /^  cd "\$\{rt%\/\*\}"\n  exec "\$rt" 'C:\/Users\/me\/\.config\/agent-inbox\/lib\/agent-inbox\.mjs' "\$@"\nfi\nif \[ ! -x "\$rt" \]/m)
 
   // cmd reads the file in the console's code page: no user name in it, only ASCII
   const cmd = cmdLauncher('C:\\Users\\张三\\AppData\\Local\\Programs\\Orca\\Orca.exe', 'C:\\Users\\张三')
@@ -206,7 +207,7 @@ test('in WSL the installed CLI passes on the directory and Git top level WSL has
   install(config, home, ROOT, process.execPath, 'win32')
   const bin = join(home, 'wsl-bin')
   mkdirSync(bin)
-  writeFileSync(join(bin, 'wslpath'), '#!/bin/sh\n[ "$1" = -u ] && shift\nprintf "%s\\n" "$1"\n', { mode: 0o755 })
+  writeFileSync(join(bin, 'wslpath'), '#!/bin/sh\ncase "$1" in -u|-w) shift ;; esac\nprintf "%s\\n" "$1"\n', { mode: 0o755 })
   const src = join(workspace, 'src')
   mkdirSync(src)
   const wsl = { WSL_DISTRO_NAME: 'Ubuntu', PATH: `${bin}${delimiter}${process.env.PATH}`, AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_wsl' }
@@ -215,6 +216,8 @@ test('in WSL the installed CLI passes on the directory and Git top level WSL has
 
   assert.equal((await run('ask', 'K-1', 'from WSL')).code, 0)
   assert.equal(calls()[0], `worktree set --worktree path:${workspace} --workspace-status in-review --comment K-1: from WSL --unread --json`)
+  // orca learns the directory from ORCA_CLI_CWD, in Windows form (here wslpath leaves it as it is)
+  assert.deepEqual(orca.cliCwds(), [src])
   assert.equal((await run('notify', '--worktree', '..', 'K-2', 'x')).code, 0)
   const [ask, notify] = readEntries(config.logPath)
   assert.equal(ask.terminal, 'term_wsl')
