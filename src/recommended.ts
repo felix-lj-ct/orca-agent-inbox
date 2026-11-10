@@ -1,11 +1,12 @@
 // The recommended points: what the panel offers under Recommended points, as RECOMMENDED.md lists them under
 // "In Agent Inbox". The plugin wires each one itself. Adding one records it with `agent-inbox point add`, and
-// the record is the switch: the point works while it is recorded, and removing the record stops it. RECOMMENDED.md
-// collects the points people wire, and each release picks some of them for the panel.
+// the record is the switch: the point works while it is recorded, and removing the record stops it. People share
+// the points they wire in the repository's Discussions, under Recommended points, and each release picks some of
+// them for RECOMMENDED.md and for the panel.
 import { REPO, type WiredPoint } from './protocol'
 
-/** Where people read every recommended point and suggest their own. */
-export const RECOMMENDED_URL = `https://github.com/${REPO}/blob/main/RECOMMENDED.md`
+/** The Discussions category where people share the points they wire and read those of others. */
+export const DISCUSSIONS_URL = `https://github.com/${REPO}/discussions/categories/recommended-points`
 
 /**
  * A question an agent asks with the AskUserQuestion tool waits under Waiting on you until it is answered. The CLI

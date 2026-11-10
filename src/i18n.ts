@@ -69,8 +69,8 @@ const en = {
   removeRecommendedTip: 'Stop this point and take it off the list; it shows under Recommended points again',
   noRecommendations: 'You have added every recommended point.',
   /** the link follows it */
-  moreRecommendations: 'More points, and how to suggest yours: ',
-  recommendedOnGitHub: 'RECOMMENDED.md on GitHub',
+  moreRecommendations: 'See the points others wire, and share yours: ',
+  recommendedDiscussions: 'GitHub Discussions',
   addPointPrompt: (guide: string) =>
     `Read ${guide} and add one Agent Inbox point to my workflow: ask me what should send, wire it where it belongs, and record it with agent-inbox point add.`,
   removePointPrompt: (guide: string, p: WiredPoint) =>
@@ -150,8 +150,8 @@ const zhCN: Strings = {
   addRecommendedTip: '接入并登记到「接入点」；在那里点「移除」就停止',
   removeRecommendedTip: '停止这个接入点并从列表移除；它会回到「推荐接入点」',
   noRecommendations: '推荐的接入点都已接入。',
-  moreRecommendations: '更多推荐接入点，以及怎么提交你的：',
-  recommendedOnGitHub: 'GitHub 上的 RECOMMENDED.md',
+  moreRecommendations: '看大家接了哪些点，分享你的：',
+  recommendedDiscussions: 'GitHub 讨论区',
   addPointPrompt: (guide) => `读 ${guide}，给我的工作流新增一个 Agent Inbox 接入点：先问我在什么场景发，接到它该在的位置，再用 agent-inbox point add 登记。`,
   removePointPrompt: (guide, p) =>
     `读 ${guide}，移除 Agent Inbox 接入点 ${p.id}（${p.when}；接在 ${p.wiredIn}）：把它的调用从我的工作流里去掉，再运行 agent-inbox point remove ${p.id}。`,

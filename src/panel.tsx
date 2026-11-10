@@ -28,7 +28,7 @@ import {
 } from 'orca'
 import { strings } from './i18n'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type WaitingItem, type WiredPoint } from './protocol'
-import { RECOMMENDED, RECOMMENDED_URL, recommended } from './recommended'
+import { DISCUSSIONS_URL, RECOMMENDED, recommended } from './recommended'
 
 const REFRESH_MS = 60_000
 /** The longest a request may wait: the worker reads the board, then gives the agent up to a minute to start. */
@@ -431,7 +431,7 @@ function recommendedSection(points: WiredPoint[]) {
       )}
       <Text muted size="xs">
         {s.moreRecommendations}
-        <Link href={RECOMMENDED_URL}>{s.recommendedOnGitHub}</Link>
+        <Link href={DISCUSSIONS_URL}>{s.recommendedDiscussions}</Link>
       </Text>
     </>
   )

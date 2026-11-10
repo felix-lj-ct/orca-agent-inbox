@@ -106,9 +106,10 @@ file of your workflow changes.
   does not hook agents on SSH hosts or in WSL yet. If you wired AskUserQuestion yourself with a hook, remove that
   hook once you add this point, or each question is sent twice.
 
-[`RECOMMENDED.md`](RECOMMENDED.md) collects the points people wire, and each release picks some of them for the
-panel. To suggest yours, open a pull request that adds it there. The panel shows what came with your version and
-does not read the page. To hide the section, turn off **Show recommended points** in the settings.
+People share the points they wire in Discussions, under [Recommended points](https://github.com/felix-lj-ct/orca-agent-inbox/discussions/categories/recommended-points),
+where the panel's link goes; each release picks some of them for [`RECOMMENDED.md`](RECOMMENDED.md) and for the
+panel. To share yours, start a discussion there. The panel shows what came with your version and reads nothing
+from the network. To hide the section, turn off **Show recommended points** in the settings.
 
 ## The CLI
 

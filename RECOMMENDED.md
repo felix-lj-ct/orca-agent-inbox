@@ -1,9 +1,11 @@
 # Recommended points
 
-A point is a place in your workflow that sends to Agent Inbox. This file collects the points people wire, and
-each release of Agent Inbox picks some of them for the panel. **Recommended points**, after **Wired points**,
-lists the ones you have not added yet. The panel shows what came with your version of the plugin: it does not
-read this page. To hide the section, turn off **Show recommended points** in the plugin's settings.
+A point is a place in your workflow that sends to Agent Inbox. People share the points they wire in this
+repository's Discussions, under [Recommended points](https://github.com/felix-lj-ct/orca-agent-inbox/discussions/categories/recommended-points), and each release
+of Agent Inbox picks some of them for this file and for the panel. **Recommended points**, after **Wired points**
+in the panel, lists the ones you have not added yet and links to the discussions. The panel shows what came with
+your version of the plugin: it reads nothing from the network. To hide the section, turn off **Show recommended
+points** in the plugin's settings.
 
 ## In Agent Inbox
 
@@ -30,7 +32,7 @@ that `agent-inbox hook` gives your agents then says that such questions reach th
 
 ## Collected
 
-Points that people wire in their own workflows, for each release to pick from.
+Points picked from the discussions: wire them by hand as they say, until a release wires one in the panel.
 
 ### Agents know the inbox
 
@@ -51,24 +53,13 @@ Points that people wire in their own workflows, for each release to pick from.
 }
 ```
 
-The README says more in [Tell your agents](README.md#tell-your-agents).
+The README says more in [Tell your agents](README.md#tell-your-agents). Discussed in
+[#6](https://github.com/felix-lj-ct/orca-agent-inbox/discussions/6).
 
-## Suggest a point
+## Share a point
 
-Open a pull request that adds your point under **Collected**, in this form:
-
-````md
-### <What it does, in a few words>
-
-| | |
-| --- | --- |
-| Shows under | Waiting on you (`ask`) or Messages (`notify`) |
-| Key | The key it sends |
-| Sends when | When it sends, and when it no longer waits, for an ask |
-| Wired in | The hook, script or automation that sends, and the agent or tool it needs |
-
-<The change that wires it: the hook setting, or the lines of the script.>
-````
+Start a discussion under [Recommended points](https://github.com/felix-lj-ct/orca-agent-inbox/discussions/categories/recommended-points). Its form asks where the
+point shows, the key it sends, when it sends, where it is wired, and the change that wires it.
 
 A good point sends what the person would otherwise miss or wait for, sends it once, and never fails the job it
 is in: a script ends the call with `|| true`. The message and its link go into a plain text log, so they hold no
