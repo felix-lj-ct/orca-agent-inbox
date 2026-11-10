@@ -1,5 +1,5 @@
 import { assert, test } from 'orca/testing'
-import { currentId, keepLines, messageId, openAsks, parseLine, parseLog, pathKey, recentMessages } from './log'
+import { currentId, heldAsks, keepLines, messageId, openAsks, parseLine, parseLog, pathKey, recentMessages } from './log'
 
 const DAY = 24 * 3600 * 1000
 const NOW = Date.parse('2026-11-20T12:00:00Z')
@@ -54,6 +54,44 @@ test('prune keeps the window and every open ask however old, and drops broken li
     keepLines(lines, NOW, 1).map((raw) => JSON.parse(raw).key),
     ['OLD-OPEN', 'NEW']
   )
+})
+
+test('held asks: the last of each workspace, resolved or not, unless resolved before the hold or marked handled', () => {
+  const entries = parseLog(
+    [
+      line(9, 'ask', 'BEFORE', '/before'),
+      line(8, 'resolve', 'BEFORE', '/before'),
+      line(7, 'ask', 'OPEN-AT-HOLD', '/open'),
+      line(4, 'ask', 'RESOLVED', '/resolved'),
+      line(3, 'resolve', 'RESOLVED', '/resolved'),
+      line(3, 'ask', 'OLD', '/twice'),
+      line(2, 'ask', 'NEW', '/twice'),
+      line(2, 'ask', 'HANDLED', '/handled'),
+      line(1, 'notify', 'NOTE', '/note')
+    ].join('\n')
+  )
+  const handled = entries.find((e) => e.key === 'HANDLED')
+  assert.ok(handled)
+  const held = heldAsks(entries, { since: NOW - 5 * DAY, handled: { [pathKey('/handled')]: messageId(handled) } })
+  assert.deepEqual([...held.values()].map((e) => e.key), ['OPEN-AT-HOLD', 'RESOLVED', 'NEW'])
+  // a new ask after the handled one is held again
+  const again = parseLog([line(2, 'ask', 'HANDLED', '/handled'), line(1, 'ask', 'AGAIN', '/handled')].join('\n'))
+  assert.deepEqual([...heldAsks(again, { since: NOW - 5 * DAY, handled: { [pathKey('/handled')]: messageId(handled) } }).values()].map((e) => e.key), ['AGAIN'])
+})
+
+test('with a hold, prune keeps each held ask however old, with the resolves after it', () => {
+  const lines = [
+    line(30, 'ask', 'HELD', '/held'),
+    line(29, 'notify', 'NOTE', '/held'),
+    line(28, 'resolve', 'HELD', '/held'),
+    line(20, 'ask', 'DONE', '/done'),
+    line(19, 'resolve', 'DONE', '/done')
+  ]
+  const done = parseLine(lines[3])
+  assert.ok(done)
+  const hold = { since: NOW - 40 * DAY, handled: { [pathKey('/done')]: messageId(done) } }
+  assert.deepEqual(keepLines(lines, NOW, 7, hold).map((raw) => JSON.parse(raw).message), ['ask HELD', 'resolve HELD'])
+  assert.deepEqual(keepLines(lines, NOW, 7), [])
 })
 
 test('messages are the notify lines of the window, newest first', () => {

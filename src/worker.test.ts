@@ -9,7 +9,7 @@ import { cliPath, readEntries } from './store'
 import * as main from './worker'
 
 const DAY = 24 * 3600 * 1000
-/** pbcopy, xclip and gh are faked as shell scripts on PATH; Windows runs neither the scripts nor those commands. */
+/** gh is faked as a shell script on PATH; Windows runs neither the script nor the command. */
 const POSIX_ONLY = { skip: process.platform === 'win32' }
 
 function sandbox() {
@@ -91,7 +91,8 @@ test('installs, prunes, and lists what waits and the recent messages', async () 
         reason: 'pick A or B',
         since: inbox.waiting[0].since,
         url: null,
-        terminal: 'term_asker'
+        terminal: 'term_asker',
+        resumed: false
       }
     ])
     assert.deepEqual(inbox.messages.map((m) => [m.key, m.text, m.url]), [
@@ -149,6 +150,45 @@ test('resolve runs the CLI, which moves the workspace back and logs it', async (
     assert.equal(last?.worktree, workspace)
     assert.ok(worker.posts.some((p) => p.event === 'inbox.changed'))
     await worker.deactivate()
+  })
+})
+
+test('asks kept until handled stay after the agent resolves and the card moves, until Mark handled', async () => {
+  const { home, orca, logPath, workspace, worktrees, answer } = sandbox()
+  const entry = (at: number, kind: string, key: string, worktree: string) =>
+    JSON.stringify({ v: 1, ts: new Date(at).toISOString(), kind, key, message: kind === 'ask' ? `${key} asks` : '', url: null, worktree, terminal: null })
+  const append = (kind: string, key: string, worktree: string, at = Date.now()) =>
+    writeFileSync(logPath, `${readFileSync(logPath, 'utf8')}${entry(at, kind, key, worktree)}\n`)
+  const other = join(home, 'other')
+  // resolved before the setting goes on: it does not come back
+  append('ask', 'GONE', other, Date.now() - 30 * 60_000)
+  append('resolve', 'GONE', other, Date.now() - 20 * 60_000)
+  const waiting = async (worker: Awaited<ReturnType<typeof mountWorker>>) =>
+    (await worker.request('inbox.list')).waiting.map((w) => [w.key, w.resumed])
+  await withHome(home, async () => {
+    const host = mockHost({ settings: { logPath, orcaCli: orca, keepAsksUntilHandled: true } })
+    const worker = await mountWorker(main, { host })
+    assert.deepEqual(await waiting(worker), [['P-1', false]])
+    assert.equal(typeof host.data().storage.holdSince, 'number')
+
+    // the agent got its answer: it resolves, and the card moves back
+    append('resolve', 'P-1', workspace)
+    answer('worktree ps', { worktrees: worktrees.map((w) => ({ ...w, workspaceStatus: 'in-progress' })) })
+    answer('worktree show', { worktree: { workspaceStatus: 'in-progress' } })
+    assert.deepEqual(await waiting(worker), [['P-1', true]])
+
+    assert.deepEqual(await worker.request('inbox.resolve', { path: workspace, key: 'P-1' }), { ok: true })
+    assert.deepEqual(await waiting(worker), [])
+
+    // a new ask in the workspace is kept again
+    append('ask', 'P-2', workspace)
+    assert.deepEqual(await waiting(worker), [['P-2', false]])
+    await worker.deactivate()
+
+    // off: the card decides again, and what was kept goes
+    const off = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca }, storage: host.data().storage as Record<string, never> }) })
+    assert.deepEqual(await waiting(off), [])
+    await off.deactivate()
   })
 })
 
@@ -265,27 +305,6 @@ test('a first start without a log puts up the setup task, which stays gone once 
     assert.equal((await second.request('inbox.list')).setupPending, false)
     await second.deactivate()
   })
-})
-
-test('copy puts the text on the system clipboard', POSIX_ONLY, async () => {
-  const { home, orca, logPath } = sandbox()
-  const bin = join(home, 'bin')
-  mkdirSync(bin)
-  for (const name of ['pbcopy', 'wl-copy', 'xclip']) {
-    writeFileSync(join(bin, name), `#!/bin/bash\ncat > "${home}/clipboard"\n`, { mode: 0o755 })
-  }
-  const path = process.env.PATH
-  process.env.PATH = `${bin}${delimiter}${path}`
-  try {
-    await withHome(home, async () => {
-      const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
-      assert.deepEqual(await worker.request('inbox.copy', { text: '读 agent-guide.md' }), { ok: true })
-      assert.equal(readFileSync(join(home, 'clipboard'), 'utf8'), '读 agent-guide.md')
-      await worker.deactivate()
-    })
-  } finally {
-    process.env.PATH = path
-  }
 })
 
 test("launch starts Orca's default agent with the prompt in the selected workspace, and needs one selected", async () => {

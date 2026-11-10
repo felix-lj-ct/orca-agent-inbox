@@ -6,12 +6,10 @@ import {
   Button,
   Callout,
   Card,
-  Code,
   Collapsible,
   EmptyState,
   env,
   IconButton,
-  KeyValue,
   Link,
   plugin,
   read,
@@ -29,7 +27,7 @@ import {
   type PanelContext
 } from 'orca'
 import { strings } from './i18n'
-import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup, type WaitingItem, type WiredPoint } from './protocol'
+import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type WaitingItem, type WiredPoint } from './protocol'
 
 const REFRESH_MS = 60_000
 /** The longest a request may wait: the worker reads the board, then gives the agent up to a minute to start. */
@@ -42,8 +40,6 @@ const failure = atom<string | null>(null)
 const shownMessages = { unread: atom(MESSAGE_PAGE), history: atom(MESSAGE_PAGE) }
 const messagesOpen = atom(true)
 const messagesTab = atom<'unread' | 'read'>('unread')
-/** The setup prompt is on the clipboard. */
-const copied = atom(false)
 /** Wired points stay open or closed as the person left them; a run ends whenever another sidebar tab shows. */
 const pointsOpen = atom('pointsOpen', false, { persist: 'plugin' })
 /** The footer's Star worked once; it then only says thanks. */
@@ -69,7 +65,7 @@ async function act(request: Promise<ActionResult>, then?: () => Promise<void>): 
   try {
     const result = await request
     const s = t()
-    const known: Record<string, string> = { 'no-terminal': s.noTerminal, 'no-clipboard': s.noClipboard, 'no-workspace': s.noWorkspace }
+    const known: Record<string, string> = { 'no-terminal': s.noTerminal, 'no-workspace': s.noWorkspace }
     const error = (result.error !== undefined ? known[result.error] : undefined) ?? result.error ?? s.actionFailed
     ok = result.ok
     set(failure, ok ? null : error)
@@ -94,11 +90,10 @@ async function openLink(url: string): Promise<boolean> {
     return false
   }
 }
-/** A message counts as read once its link opened. */
+/** A message counts as read once its link opened, unless the settings keep it unread until marked. */
 const openMessage = async (m: InboxMessage) => {
-  if ((await openLink(m.url as string)) && !m.read) await markRead([m])
+  if ((await openLink(m.url as string)) && !m.read && !read(inbox)?.keepMessagesUntilRead) await markRead([m])
 }
-const copy = async (text: string) => set(copied, await act(plugin.request('inbox.copy', { text })))
 const finishSetup = () => act(plugin.request('inbox.setupDone'), refresh)
 /** The agent opens focused in the selected workspace; the points list follows its `point add` or `point remove`. */
 const launch = (prompt: string) => act(plugin.request('inbox.launch', { prompt }, { timeoutMs: LAUNCH_TIMEOUT_MS }))
@@ -137,7 +132,8 @@ export function setup(ctx: PanelContext): void {
 
 /**
  * One ask as a bordered tile: what and when, the reason, then the actions with their names on them,
- * Go to agent filled as the one to take. The project shows in the group around it.
+ * Go to agent filled as the one to take. The project shows in the group around it. An ask kept until handled
+ * that the agent already resolved says so, muted, before the time.
  */
 function waitingItem(w: WaitingItem) {
   const s = t()
@@ -149,6 +145,7 @@ function waitingItem(w: WaitingItem) {
         </Text>
         {w.since !== null && (
           <Text muted size="xs">
+            {w.resumed && `${s.resumed} · `}
             <RelativeTime at={w.since} />
           </Text>
         )}
@@ -158,7 +155,7 @@ function waitingItem(w: WaitingItem) {
         <Button size="sm" variant="solid" tone="accent" icon="terminal" tooltip={s.goToTip} onPress={() => goTo(w)}>
           {s.goTo}
         </Button>
-        <Button size="sm" variant="outline" icon="check" tooltip={s.resolveTip} onPress={() => resolve(w)}>
+        <Button size="sm" variant="outline" icon="check" tooltip={w.resumed ? s.resolveResumedTip : s.resolveTip} onPress={() => resolve(w)}>
           {s.resolve}
         </Button>
         {w.url !== null && <Link onPress={() => openLink(w.url as string)}>{s.openLink}</Link>}
@@ -370,34 +367,17 @@ function pointsSection(points: WiredPoint[], guide: string) {
   )
 }
 
-/** Waits on a person who has not sent anything yet; the log path setting describes the same afterwards. */
-function setupCard(setup: Setup) {
+/** Waits on a person who has not sent anything yet: it sends them to Add a point under Wired points. */
+function setupCard() {
   const s = t()
-  const prompt = s.setupPrompt(setup.guide)
   return (
     <Card title={s.setup} description={s.setupDescription}>
       <Stack gap="sm">
         <Text size="sm">{s.setupBody}</Text>
-        <Code block>{prompt}</Code>
-        <KeyValue
-          items={[
-            { label: s.cli, value: setup.cli, code: true },
-            { label: s.guide, value: setup.guide, code: true },
-            { label: s.log, value: setup.log, code: true }
-          ]}
-        />
         <Row gap="xs" align="center">
-          <Button size="sm" icon="copy" onPress={() => copy(prompt)}>
-            {s.copyPrompt}
-          </Button>
-          <Button size="sm" variant="ghost" icon="check" onPress={finishSetup} tooltip={s.setupDoneTip}>
+          <Button size="sm" variant="outline" icon="check" onPress={finishSetup} tooltip={s.setupDoneTip}>
             {s.resolve}
           </Button>
-          {read(copied) && (
-            <Text muted size="xs">
-              {s.copied}
-            </Text>
-          )}
         </Row>
       </Stack>
     </Card>
@@ -461,7 +441,7 @@ function inboxView(data: Inbox, error: string | null) {
           <EmptyState icon="check" title={s.noneWaiting} />
         ) : (
           <Stack gap="sm">
-            {data.setupPending && setupCard(data.setup)}
+            {data.setupPending && setupCard()}
             {byProject(data.waiting).map(projectGroup)}
           </Stack>
         )}

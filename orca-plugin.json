@@ -67,6 +67,20 @@
         "maxLength": 128
       },
       {
+        "key": "keepAsksUntilHandled",
+        "title": "Keep asks until marked handled",
+        "description": "On: an ask stays under Waiting on you until you press Mark handled: going to the agent, the agent running agent-inbox resolve and its card leaving the waiting column no longer take it away. One the agent resolved says Agent resumed. Asks resolved before you turn this on do not come back. Off: an ask goes when the agent resolves it or its card leaves the waiting column.",
+        "type": "boolean",
+        "default": false
+      },
+      {
+        "key": "keepMessagesUntilRead",
+        "title": "Keep messages unread until marked read",
+        "description": "On: opening a message's link leaves it unread until you press Mark read or Mark all read. Off: opening its link marks it read.",
+        "type": "boolean",
+        "default": false
+      },
+      {
         "key": "language",
         "title": "Language",
         "description": "Language of the panel.",

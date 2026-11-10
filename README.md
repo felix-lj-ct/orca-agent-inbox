@@ -27,8 +27,9 @@ Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Wind
    not come from a catalog; press **Install**, then enable it and approve its access (see
    [Permissions](#permissions)).
 2. **Open the panel** in the right sidebar. The plugin installs the CLI at
-   `~/.config/agent-inbox/bin/agent-inbox` and a guide for agents at `~/.config/agent-inbox/agent-guide.md`
-   (on Windows, also in [WSL](#wsl)). **Waiting on you** shows a **Set up Agent Inbox** task.
+   `~/.config/agent-inbox/bin/agent-inbox`, a guide for agents at `~/.config/agent-inbox/agent-guide.md` and the
+   CLI reference beside it, `cli.md` (on Windows, also in [WSL](#wsl)). **Waiting on you** shows a **Set up
+   Agent Inbox** task.
 3. **Try it** in a terminal of any Orca workspace (on Windows, PowerShell, Git Bash or WSL):
 
    ```sh
@@ -36,7 +37,12 @@ Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Wind
    ~/.config/agent-inbox/bin/agent-inbox resolve TEST   # it goes away
    ```
 
-4. **Wire your workflow.** Give your agent this prompt (**Copy prompt** on the setup task copies it):
+4. **Wire your workflow.** The setup task sends you to **Wired points**: press **Add a point** there. Your default
+   agent starts in the workspace selected in Orca, asks you what should send here, wires it in and records it.
+   Then press **Mark handled** on the setup task.
+
+   To go through your whole workflow at once, give your agent this prompt instead (the Log file setting has it
+   too):
 
    > Read ~/.config/agent-inbox/agent-guide.md, go through my workflow, and tell me where to send Agent Inbox messages and how to wire each one.
 
@@ -47,10 +53,10 @@ Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Wind
      what is worth sending (see [Tell your agents](#tell-your-agents));
    - where your scripts and automations should send (failed jobs, expired credentials, retries used up).
 
-   It changes nothing until you agree. Then press **Mark handled** on the setup task.
+   It changes nothing until you agree.
 
-Later, press **Add a point** in the panel to wire one more point, or give the same prompt with a workflow's name
-in place of "my workflow".
+Later, press **Add a point** again to wire one more point, or give the prompt with a workflow's name in place of
+"my workflow".
 
 Optional: to have Claude Code load the guide as a skill:
 
@@ -98,6 +104,10 @@ agent-inbox hook                               # what an agent needs to know to 
 `~/.config/agent-inbox/bin` to your `PATH` to call it by name. In a script, end the call with `|| true` so a
 failed message does not fail the job.
 
+[`guide/cli.md`](guide/cli.md), installed as `~/.config/agent-inbox/cli.md`, is the reference for agents: each
+command with its arguments, what you see, which links open, the exit codes, and how to call it from PowerShell,
+cmd and WSL.
+
 The CLI runs on Orca's own runtime, so it needs no Node.js of yours. If Orca has moved since it last started,
 or runs as an AppImage and is closed, the CLI uses `node` from your `PATH`.
 
@@ -137,12 +147,19 @@ mkdir -p ~/.config && ln -sfn "$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2
 Settings → Plugins → Agent Inbox: the log file, how many days to keep messages (7), the board columns that `ask`
 moves a workspace to and `resolve` moves it back to (`in-review`, `in-progress`), and the language.
 
+Two switches, both off by default, leave it to you to say when something is done:
+
+- **Keep asks until marked handled**: an ask stays under **Waiting on you** until you press **Mark handled**, also
+  after you go to the agent, the agent runs `agent-inbox resolve` or its card leaves the waiting column. One the
+  agent resolved says **Agent resumed**. Asks resolved before you turn it on do not come back.
+- **Keep messages unread until marked read**: opening a message's link leaves it unread until you press
+  **Mark read** or **Mark all read**.
+
 ## Permissions
 
 The plugin runs as a `trusted-worker`, a Node.js process with your user's access. It runs the `orca` CLI to read
-and move the board and to start your agent, reads which agent is your default from Orca's profile state, puts
-the setup prompt on the clipboard with your system's command (`pbcopy`; `wl-copy`, `xclip` or `xsel`; PowerShell's
-`Set-Clipboard` on Windows), and writes `~/.config/agent-inbox/` and the log. On Windows it also runs `wsl.exe` to
+and move the board and to start your agent, reads which agent is your default from Orca's profile state, and
+writes `~/.config/agent-inbox/` and the log. On Windows it also runs `wsl.exe` to
 list the running WSL distros and link `~/.config/agent-inbox` in those with a workspace in Orca. Its only network request is **Star on GitHub**, made through your
 `gh` CLI when you press it.
 

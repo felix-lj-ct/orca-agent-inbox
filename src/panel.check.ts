@@ -2,6 +2,8 @@
 // the real board and the log at the default path, so `live` and `chinese` show the live state: once fresh, once in
 // Chinese. `cover` answers inbox.list with made-up data instead, Wired points open, for the listing images:
 // orca plugin shot . --scenario cover --theme dark
+// `kept` shows the same in Chinese with an ask the agent resolved, kept until marked handled. `first-start` shows
+// the setup task alone.
 import { defineCheck } from 'orca/testing'
 import type { Inbox, InboxMessage } from './protocol'
 
@@ -25,7 +27,8 @@ const cover: Inbox = {
       reason: 'The migration drops the unused settlement_batch index on 40M rows. OK to run it on staging?',
       since: ago(4),
       url: 'https://github.com/acme/payments-api/pull/924',
-      terminal: 'term_1'
+      terminal: 'term_1',
+      resumed: false
     },
     {
       path: '/work/payments-api/PAY-2297',
@@ -34,7 +37,8 @@ const cover: Inbox = {
       reason: 'Refunds round half-up in the API but half-even in the ledger. Which one is the spec?',
       since: ago(52),
       url: null,
-      terminal: 'term_3'
+      terminal: 'term_3',
+      resumed: false
     },
     {
       path: '/work/platform/release-2.14',
@@ -43,7 +47,8 @@ const cover: Inbox = {
       reason: 'All 1,284 checks are green on staging. Tag v2.14.0 and roll out to production?',
       since: ago(95),
       url: 'https://github.com/acme/platform/actions/runs/8812',
-      terminal: 'term_4'
+      terminal: 'term_4',
+      resumed: false
     }
   ],
   messages: [
@@ -71,6 +76,7 @@ const cover: Inbox = {
     { id: 'db-backup', kind: 'notify', key: 'db-backup', when: 'The weekly snapshot ends', wiredIn: 'Orca automation "DB backup"' }
   ],
   retentionDays: 7,
+  keepMessagesUntilRead: false,
   language: 'en',
   setup: {
     cli: '~/.config/agent-inbox/bin/agent-inbox',
@@ -85,6 +91,18 @@ export default defineCheck({
   live: {},
   chinese: { settings: { language: 'zh-CN' } },
   cover: { requests: { 'inbox.list': () => cover }, persisted: { plugin: { pointsOpen: true } } },
+  // asks kept until handled: the second one the agent already resolved
+  kept: {
+    settings: { language: 'zh-CN' },
+    requests: { 'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: cover.waiting.map((w, i) => ({ ...w, resumed: i === 1 })) }) }
+  },
+  // a first start, in Chinese: only the setup task waits, and it sends the person to Add a point
+  'first-start': {
+    settings: { language: 'zh-CN' },
+    requests: {
+      'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], setupPending: true })
+    }
+  },
   // a shot stops at the window's height: with nothing above them, the wired points fit in one
   'cover-points': { requests: { 'inbox.list': () => ({ ...cover, waiting: [], messages: [], unreadCount: 0, readCount: 0 }) }, persisted: { plugin: { pointsOpen: true } } }
 })

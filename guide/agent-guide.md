@@ -8,8 +8,10 @@ description: Use when the person asks where their workflow should ask them or te
 Agent Inbox is an Orca plugin. Its sidebar panel shows the person three lists:
 
 - **Waiting on you**: workspaces that an agent moved to the board's waiting column with `agent-inbox ask`,
-  each with the reason and a button that goes to the terminal of the agent that asked.
-- **Messages**: lines sent with `agent-inbox notify`, kept for the retention window (default 7 days).
+  each with the reason, a button that goes to the terminal of the agent that asked, and a link when the agent
+  gave one.
+- **Messages**: lines sent with `agent-inbox notify`, each with a link when the sender gave one, kept for the
+  retention window (default 7 days).
 - **Wired points**: the points of the workflow that send, recorded with `agent-inbox point add`, so the
   person can see what may write to the inbox and where it is wired.
 
@@ -27,31 +29,21 @@ What the person asked decides your job:
   the calls in the workflow and fix the records, once the person agrees (section 7). **Change no workflow
   files.**
 
-Check the plugin first:
+## The CLI
+
+First read `~/.config/agent-inbox/cli.md`, the reference of the CLI: each command with its arguments, what the
+person sees, where it runs, what a message and its link can hold, the exit codes, and how to call it in
+PowerShell, cmd and WSL. This guide writes `agent-inbox` for `~/.config/agent-inbox/bin/agent-inbox`.
+
+If the file is not there, the plugin is not installed or has not started yet; in WSL, the link to the Windows
+folder can also be missing. Tell the person and stop. Then check that the CLI runs, the way `cli.md` gives for
+your shell:
 
 ```sh
 ~/.config/agent-inbox/bin/agent-inbox where
 ```
 
-If this fails, the plugin is not installed or has not started yet. Tell the person and stop. On Windows this
-command runs as written in PowerShell, Git Bash and WSL; in cmd, run
-`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`. In WSL, `~/.config/agent-inbox` is a link that
-the plugin makes to the Windows folder while the distro runs and the Agent Inbox panel is open: if it is missing,
-tell the person to open the panel, or to make the link as the plugin's README says, and stop.
-
-## What the CLI does
-
-| Command | The person sees | Runs from |
-| --- | --- | --- |
-| `agent-inbox ask <key> "<message>" [<url>]` | A card under Waiting on you; the workspace moves to the waiting column with an unread dot | Inside an Orca workspace, or with `--worktree <path>` right after `ask` |
-| `agent-inbox resolve <key>` | The card goes; the workspace moves back to the resolved column, if it is still waiting | The same workspace |
-| `agent-inbox notify <key> "<message>" [<url>]` | A line under Messages | Anywhere |
-| `agent-inbox hook` | Nothing: it prints the brief, a few lines that tell an agent about the inbox and its commands and leave to it what to send | An agent's session-start hook; it prints nothing outside an Orca terminal |
-| `agent-inbox point add <id> <ask\|notify> <key> "<when>" "<wired in>"` | A row under Wired points; the same id again replaces it | Anywhere |
-| `agent-inbox point remove <id>` / `agent-inbox point list` | The row goes / the recorded points, one JSON object per line | Anywhere |
-
-The key names the work (ticket id, job name, automation name). A workspace has one waiting state: a later
-`ask` replaces the reason, one `resolve` clears it. Run `agent-inbox` with no arguments for its usage.
+If this fails, tell the person what it printed and stop.
 
 ## Agents judge; scripts are wired
 
@@ -145,7 +137,8 @@ Keep a point only if all of these are true:
 - **One channel.** If the person already gets it through a channel they read, propose to point that channel
   at `agent-inbox` or leave the point out. Never add a second message for the same event.
 - **One line.** It fits in about 120 characters: what is needed, or what happened and what the person should
-  do. Add the URL when there is a page to open. No secrets: the log is a plain text file.
+  do. Add the URL when there is a page to open (`cli.md` says which links open). No secrets: the log is a plain
+  text file.
 - **Once.** A lasting condition (an expired credential, a missing input) is sent once, not on every run.
 
 Fewer points are better: every message should be one the person acts on or wants to know.
@@ -211,8 +204,9 @@ a session starts, resumes, and after `/clear` and compaction.
 On Windows, Claude Code runs hook commands in Git Bash, or in PowerShell when Git Bash is missing; this command
 runs as written in both.
 
-**B. Script or precheck**: one call, its result ignored. In another language, run the same command and
-ignore its exit code.
+**B. Script or precheck**: one call, its result ignored. For PowerShell, a `.bat` or `.cmd` script or another
+language, and for arguments with `&`, `|`, `<`, `>`, `^` or a line break, call it as `cli.md` says under "In a
+script".
 
 ```sh
 ~/.config/agent-inbox/bin/agent-inbox notify nightly-build "build failed: 3 tests red" "$BUILD_URL" || true
@@ -220,13 +214,6 @@ ignore its exit code.
 
 For a lasting condition, keep a marker file while it holds, and send again only after it cleared and came
 back.
-
-On Windows, the command above runs as written in Git Bash and WSL. In PowerShell, `|| true` does not work: call
-`~/.config/agent-inbox/bin/agent-inbox` inside `try { ... } catch {}`. In a `.bat` or `.cmd` script, use
-`call "%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" ... || ver >nul`: without `call` the script stops
-after it. PowerShell and cmd pass the arguments through cmd, which splits an argument without spaces at `&`, `|`,
-`<`, `>` or `^`, and cuts one at a line break: in PowerShell, quote such an argument twice, as in
-`'"https://ci.example.com/run?id=1&tab=log"'`.
 
 **C. Instruction file or automation prompt**: only where sections 2 and 4 send you here. For an agent without
 a session-start hook, put the brief under a heading such as `## Agent Inbox` in its global instruction file,

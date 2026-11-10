@@ -5,13 +5,14 @@ import type { Inbox, InboxMessage } from './protocol'
 
 const inbox = (language: Inbox['language'], waiting = true): Inbox => ({
   waiting: waiting
-    ? [{ path: '/w/a', key: 'P-1', repo: 'app', reason: 'pick A or B', since: Date.now() - 60_000, url: null, terminal: 'term_1' }]
+    ? [{ path: '/w/a', key: 'P-1', repo: 'app', reason: 'pick A or B', since: Date.now() - 60_000, url: null, terminal: 'term_1', resumed: false }]
     : [],
   messages: [{ id: 'm1', at: Date.now() - 3_600_000, key: 'BUILD', text: 'nightly build failed', url: 'https://ci/1', read: false }],
   unreadCount: 1,
   readCount: 0,
   points: [],
   retentionDays: 7,
+  keepMessagesUntilRead: false,
   language,
   setup: { cli: '/h/.config/agent-inbox/bin/agent-inbox', guide: '/h/.config/agent-inbox/agent-guide.md', log: '/h/inbox.jsonl' },
   setupPending: false,
@@ -112,16 +113,11 @@ test('asks the worker for the newest messages, and Show more asks for more', asy
   }
 })
 
-test('the setup task copies the prompt and goes once handled', async () => {
-  const copies: unknown[] = []
+test('the setup task sends the person to Add a point and goes once handled', async () => {
   let current: Inbox = { ...inbox('en', false), setupPending: true }
   const host = mockHost({
     requests: {
       'inbox.list': () => current,
-      'inbox.copy': (input) => {
-        copies.push(input)
-        return copies.length === 1 ? { ok: false, error: 'no-clipboard' } : { ok: true }
-      },
       'inbox.setupDone': () => {
         current = { ...current, setupPending: false }
         return { ok: true }
@@ -129,20 +125,14 @@ test('the setup task copies the prompt and goes once handled', async () => {
     }
   })
   const view = await mount(panel, { host })
-  const prompt = 'Read /h/.config/agent-inbox/agent-guide.md, go through my workflow, and tell me where to send Agent Inbox messages and how to wire each one.'
+  const body = 'Open Wired points below and press Add a point: your agent asks what should send here, wires it into your workflow and records it.'
   try {
     assert.ok(view.find({ text: /^Waiting on you \(1\)/ }))
-    assert.ok(view.find({ text: prompt }))
+    assert.ok(view.find({ text: body }))
     assert.equal(view.find({ text: 'Nothing is waiting on you' }), null)
 
-    await view.press({ text: 'Copy prompt' })
-    assert.ok(view.find({ text: 'No clipboard command found; select the prompt and copy it by hand' }))
-    await view.press({ text: 'Copy prompt' })
-    assert.deepEqual(copies, [{ text: prompt }, { text: prompt }])
-    assert.ok(view.find({ text: 'Copied; paste it to your agent' }))
-
     await view.press({ text: 'Mark handled' })
-    assert.equal(view.find({ text: prompt }), null)
+    assert.equal(view.find({ text: body }), null)
     assert.ok(view.find({ text: /^Waiting on you \(0\)/ }))
     assert.deepEqual(view.errors, [])
   } finally {
@@ -238,6 +228,57 @@ test('a message counts as read once its link opened, and a link Orca refuses say
   }
 })
 
+test('with messages kept until marked read, an opened link leaves the message unread', async () => {
+  const marked: unknown[] = []
+  const host = mockHost({
+    results: { 'shell.openExternal': () => ({ opened: true }) },
+    requests: {
+      'inbox.list': () => ({ ...inbox('en', false), keepMessagesUntilRead: true }),
+      'inbox.read': (input) => {
+        marked.push(input)
+        return { ok: true }
+      }
+    }
+  })
+  const view = await mount(panel, { host })
+  try {
+    await view.press({ type: 'Button', text: 'Open link' })
+    assert.equal(host.callsOf('shell.openExternal').length, 1)
+    assert.deepEqual(marked, [])
+    await view.press({ text: 'Mark read' })
+    assert.deepEqual(marked, [{ ids: ['m1'] }])
+    assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('an ask kept after the agent resolved it says so before the time', async () => {
+  const kept = (language: Inbox['language']): Inbox => {
+    const data = inbox(language)
+    return { ...data, waiting: data.waiting.map((w) => ({ ...w, resumed: true })) }
+  }
+  for (const [language, label, tip] of [
+    ['en', /^Agent resumed · /, 'Take it off this list; the agent already went on'],
+    ['zh-CN', /^agent 已继续 · /, '从列表里移除；agent 已经继续了']
+  ] as const) {
+    const view = await mount(panel, { host: mockHost({ requests: { 'inbox.list': () => kept(language) } }) })
+    try {
+      assert.ok(view.find({ type: 'Text', text: label }))
+      assert.equal(view.find({ type: 'Button', text: language === 'en' ? 'Mark handled' : '标记已处理' })?.props.tooltip, tip)
+      assert.deepEqual(view.errors, [])
+    } finally {
+      await view.unmount()
+    }
+  }
+  const plain = await mount(panel, { host: mockHost({ requests: { 'inbox.list': () => inbox('en') } }) })
+  try {
+    assert.equal(plain.find({ type: 'Text', text: /^Agent resumed/ }), null)
+  } finally {
+    await plain.unmount()
+  }
+})
+
 test('groups what waits by project, the project with the newest ask first', async () => {
   const item = (key: string, repo: string, minutesAgo: number | null) => ({
     path: `/w/${key}`,
@@ -246,7 +287,8 @@ test('groups what waits by project, the project with the newest ask first', asyn
     reason: `reason ${key}`,
     since: minutesAgo === null ? null : Date.now() - minutesAgo * 60_000,
     url: null,
-    terminal: null
+    terminal: null,
+    resumed: false
   })
   // newest first, as the worker sends them
   const waiting = [item('A-1', 'alpha', 1), item('B-1', 'beta', 2), item('A-2', 'alpha', 3), item('F-1', '', null)]

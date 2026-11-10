@@ -3,7 +3,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configDir, type InboxConfig, renderConfig } from './config'
-import { type Entry, keepLines, parseLog } from './log'
+import { type Entry, type Hold, keepLines, parseLog } from './log'
 import { parsePoints, pointsPath } from './points'
 import type { Setup, WiredPoint } from './protocol'
 
@@ -125,9 +125,9 @@ export const cliPath = (home: string, platform: string = process.platform) =>
   join(configDir(home), 'bin', platform === 'win32' ? 'agent-inbox.cmd' : 'agent-inbox')
 
 /**
- * Installs the CLI with its launchers, config.json and the agent guide from the plugin folder into
- * ~/.config/agent-inbox, where agents find them whatever version of the plugin is installed, and creates the
- * log's folder. The launchers run the CLI on runtime: this worker's, which is Orca's own.
+ * Installs the CLI with its launchers, config.json, the agent guide and the CLI reference from the plugin
+ * folder into ~/.config/agent-inbox, where agents find them whatever version of the plugin is installed, and
+ * creates the log's folder. The launchers run the CLI on runtime: this worker's, which is Orca's own.
  */
 export function install(config: InboxConfig, home: string, pluginRoot: string, runtime = process.execPath, platform = process.platform): Setup {
   const dir = configDir(home)
@@ -140,6 +140,8 @@ export function install(config: InboxConfig, home: string, pluginRoot: string, r
   // the settings file of the shell CLI up to 0.1.2
   rmSync(join(dir, 'config.env'), { force: true })
   writeIfChanged(setup.guide, readFileSync(join(pluginRoot, 'guide', 'agent-guide.md'), 'utf8'))
+  // the guide sends agents here by this path
+  writeIfChanged(join(dir, 'cli.md'), readFileSync(join(pluginRoot, 'guide', 'cli.md'), 'utf8'))
   mkdirSync(dirname(config.logPath), { recursive: true })
   return setup
 }
@@ -166,11 +168,11 @@ function withLock<T>(logPath: string, fn: () => T): T | undefined {
 }
 
 /** Drops the log lines past the retention window (see keepLines); returns how many went. */
-export function prune(config: InboxConfig, now = Date.now()): number {
+export function prune(config: InboxConfig, now = Date.now(), hold?: Hold): number {
   if (!existsSync(config.logPath)) return 0
   const removed = withLock(config.logPath, () => {
     const lines = readFileSync(config.logPath, 'utf8').split('\n').filter((line) => line.trim())
-    const kept = keepLines(lines, now, config.retentionDays)
+    const kept = keepLines(lines, now, config.retentionDays, hold)
     if (kept.length === lines.length) return 0
     const tmp = `${config.logPath}.tmp-${process.pid}`
     writeFileSync(tmp, kept.map((line) => `${line}\n`).join(''))

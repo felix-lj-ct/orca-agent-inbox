@@ -52,7 +52,7 @@ function sandbox(status = 'in-review') {
   return { home, workspace, config, orca, calls: orca.calls, cli, cliWith, installed, env }
 }
 
-test('install puts the CLI with its launchers, config.json and the guide where agents find them', () => {
+test('install puts the CLI with its launchers, config.json, the guide and the CLI reference where agents find them', () => {
   const { home, config } = sandbox()
   const dir = join(home, '.config', 'agent-inbox')
   mkdirSync(dir, { recursive: true })
@@ -66,6 +66,7 @@ test('install puts the CLI with its launchers, config.json and the guide where a
   assert.equal(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')).log, join(home, 'state', 'inbox.jsonl'))
   assert.equal(existsSync(join(dir, 'config.env')), false)
   assert.match(readFileSync(setup.guide, 'utf8'), /^---\nname: agent-inbox\n/)
+  assert.match(readFileSync(join(dir, 'cli.md'), 'utf8'), /^# Agent Inbox CLI\n/)
   assert.ok(existsSync(dirname(config.logPath)))
 })
 
