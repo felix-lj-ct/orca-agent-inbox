@@ -226,7 +226,7 @@ test('a message counts as read once its link opened, and a link Orca refuses say
   })
   const view = await mount(panel, { host })
   try {
-    const [web, file] = view.findAll({ type: 'Link', text: 'Open link' })
+    const [web, file] = view.findAll({ type: 'Button', text: 'Open link' })
     await view.press(web)
     assert.deepEqual(marked, [{ ids: ['web'] }])
     await view.press(file)

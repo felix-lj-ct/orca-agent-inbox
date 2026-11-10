@@ -183,7 +183,11 @@ function projectGroup(group: { repo: string; items: WaitingItem[] }) {
   )
 }
 
-/** Unread: the key in bold and a Mark read button; read: the whole line muted. */
+/**
+ * Unread: the key in bold, Open link filled and a Mark read button; read: the whole line muted. Open link sits on
+ * the right with Mark read, not after the time: Orca opens a link only from a control that has not moved since
+ * it last looked, and the time changes width as it counts, every second in the first minute.
+ */
 function messageRow(m: InboxMessage) {
   const s = t()
   return (
@@ -195,17 +199,27 @@ function messageRow(m: InboxMessage) {
         {m.text}
       </Text>
       <Row justify="between" align="center" gap="sm">
+        <Text muted size="xs">
+          <RelativeTime at={m.at} />
+        </Text>
         <Row gap="sm" align="center">
-          <Text muted size="xs">
-            <RelativeTime at={m.at} />
-          </Text>
-          {m.url !== null && <Link onPress={() => openMessage(m)}>{s.openLink}</Link>}
+          {m.url !== null && (
+            <Button
+              size="xs"
+              variant={m.read ? 'outline' : 'solid'}
+              tone={m.read ? undefined : 'accent'}
+              icon="open-external"
+              onPress={() => openMessage(m)}
+            >
+              {s.openLink}
+            </Button>
+          )}
+          {!m.read && (
+            <Button size="xs" variant="outline" icon="check" onPress={() => markRead([m])}>
+              {s.markRead}
+            </Button>
+          )}
         </Row>
-        {!m.read && (
-          <Button size="xs" variant="outline" icon="check" onPress={() => markRead([m])}>
-            {s.markRead}
-          </Button>
-        )}
       </Row>
     </Stack>
   )
