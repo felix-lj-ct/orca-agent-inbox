@@ -3,9 +3,10 @@
 // every hour. It answers the panel from the log and the Orca board, which it reads through the orca CLI
 // (the host API has no board), keeps asks until the person marks them handled when the settings say so, lists
 // the points recorded beside the log, starts the agent that adds, removes
-// or aligns them, stars the repository through gh when the person asks, and tells open panels when the log or the
-// points change. On Windows it also links ~/.config/agent-inbox in the WSL distros of the board's workspaces
-// (src/wsl.ts). Orca starts it for a panel request and stops it when idle.
+// or aligns them, records and removes the recommended points, which it wires itself (src/recommended.ts), stars
+// the repository through gh when the person asks, and tells open panels when the log or the points change. On
+// Windows it also links ~/.config/agent-inbox in the WSL distros of the board's workspaces (src/wsl.ts). Orca
+// starts it for a panel request or an agent's tool call, and stops it when idle.
 import type { OrcaWorkerApi } from 'orca/worker'
 import { execFile } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
@@ -18,6 +19,8 @@ import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir, sqliteVal
 import { currentId, heldAsks, type Hold, messageId, openAsks, pathKey, recentMessages } from './log'
 import { pointsPath } from './points'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup } from './protocol'
+import { questionKey, questionReason } from './question'
+import { ASK_QUESTION, recommended } from './recommended'
 import { cliPath, install, prune, readEntries, readPoints } from './store'
 import { distroNames, linkArgs, WSL_EXE, wslDistros } from './wsl'
 
@@ -269,6 +272,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       points: readPoints(config.logPath),
       retentionDays: config.retentionDays,
       keepMessagesUntilRead: config.keepMessagesUntilRead,
+      showRecommendations: config.showRecommendations,
       language: config.language,
       setup,
       setupPending: await setupPending()
@@ -299,18 +303,24 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   }
 
+  /**
+   * The agent-inbox CLI on Orca's runtime, which runs this worker; with the settings as this worker has them,
+   * whether or not config.json is written yet.
+   */
+  const cli = (args: string[], env: Record<string, string> = {}) =>
+    run(process.execPath, [CLI, ...args], {
+      ELECTRON_RUN_AS_NODE: '1',
+      AGENT_INBOX_LOG: config.logPath,
+      AGENT_INBOX_WAITING: config.waitingStatus,
+      AGENT_INBOX_RESUME: config.resumeStatus,
+      AGENT_INBOX_ORCA: orcaCli(config),
+      ...env
+    })
+
   async function resolve(input: { path: string; key: string }): Promise<ActionResult> {
     await ready
     try {
-      // on Orca's runtime, which runs this worker; with the settings as this worker has them, whether or not
-      // config.json is written yet
-      await run(process.execPath, [CLI, 'resolve', '--worktree', input.path, input.key], {
-        ELECTRON_RUN_AS_NODE: '1',
-        AGENT_INBOX_LOG: config.logPath,
-        AGENT_INBOX_WAITING: config.waitingStatus,
-        AGENT_INBOX_RESUME: config.resumeStatus,
-        AGENT_INBOX_ORCA: orcaCli(config)
-      })
+      await cli(['resolve', '--worktree', input.path, input.key])
       await markHandled(input.path)
       return { ok: true }
     } catch (e) {
@@ -354,6 +364,57 @@ export default function activate(orca: OrcaWorkerApi): void {
     await ready
     const shown = recentMessages(readEntries(config.logPath), Date.now(), config.retentionDays).filter((e) => e.at <= through)
     return markRead(shown.map(messageId))
+  })
+
+  /** Records or removes a recommended point through the CLI, which writes the points under the log's lock. */
+  async function recommendedPoint(id: unknown, add: boolean): Promise<ActionResult> {
+    await ready
+    const point = recommended(id)
+    if (point === undefined) return { ok: false, error: `no recommended point ${String(id)}` }
+    try {
+      await cli(add ? ['point', 'add', point.id, point.kind, point.key, point.when, point.wiredIn] : ['point', 'remove', point.id])
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: errorText(e) }
+    }
+  }
+
+  orca.panels.handle('inbox.addRecommended', ({ id }) => recommendedPoint(id, true))
+  orca.panels.handle('inbox.removeRecommended', ({ id }) => recommendedPoint(id, false))
+
+  /**
+   * An agent's AskUserQuestion call, while the recommended point is recorded: an ask before it, a resolve once the
+   * person answered or dismissed it, as the agent would run them, in the workspace and terminal of the call. One
+   * after the other, so a resolve never overtakes its ask; one that fails is logged, and the next still runs.
+   */
+  let questions = Promise.resolve()
+  function question(event: { workspaceId: string | null; terminalId?: string; input?: unknown }, asked: boolean): void {
+    questions = questions.then(async () => {
+      try {
+        await ready
+        if (!event.workspaceId || !readPoints(config.logPath).some((p) => p.id === ASK_QUESTION)) return
+        const ps = await orcaJson(config, 'worktree', 'ps', '--limit', '1000')
+        const workspace = (ps.worktrees ?? []).find((w: Raw) => w.worktreeId === event.workspaceId)
+        if (typeof workspace?.path !== 'string') return
+        const key = questionKey(workspace.path, String(workspace.branch ?? ''))
+        const terminal = { ORCA_TERMINAL_HANDLE: event.terminalId ?? '' }
+        if (asked) await cli(['ask', '--worktree', workspace.path, key, questionReason(event.input)], terminal)
+        else await cli(['resolve', '--worktree', workspace.path, key], terminal)
+      } catch (e) {
+        orca.log(`AskUserQuestion ${asked ? 'ask' : 'resolve'}: ${errorText(e)}`)
+      }
+    })
+  }
+
+  // Orca waits on these for every tool call of every agent: anything but AskUserQuestion goes on at once, and
+  // the question is sent in the background
+  orca.hooks.on('agent.tool.before', (event, next) => {
+    if (event.tool === 'AskUserQuestion') question(event, true)
+    return next()
+  })
+  orca.hooks.on('agent.tool.after', (event, next) => {
+    if (event.tool === 'AskUserQuestion') question(event, false)
+    return next()
   })
 
   orca.panels.handle('inbox.setupDone', async () => {

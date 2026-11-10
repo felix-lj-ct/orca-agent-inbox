@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fakeOrca } from './fake-orca'
 import { orcaDataDir } from './launch'
-import { cliPath, readEntries } from './store'
+import { RECOMMENDED } from './recommended'
+import { cliPath, readEntries, readPoints } from './store'
 import * as main from './worker'
 
 const DAY = 24 * 3600 * 1000
@@ -18,7 +19,17 @@ function sandbox() {
   mkdirSync(workspace)
   const fake = fakeOrca(home)
   const worktrees = [
-    { path: workspace, displayName: 'workspace', repo: 'app', workspaceStatus: 'in-review', comment: 'P-1: pick A or B', agents: [], isActive: true },
+    {
+      worktreeId: `app::${workspace}`,
+      path: workspace,
+      branch: 'feature/PROJ-7-pick',
+      displayName: 'workspace',
+      repo: 'app',
+      workspaceStatus: 'in-review',
+      comment: 'P-1: pick A or B',
+      agents: [],
+      isActive: true
+    },
     { path: join(home, 'other'), displayName: 'other', repo: 'app', workspaceStatus: 'in-progress', comment: '', agents: [] }
   ]
   fake.answer('worktree ps', { worktrees })
@@ -73,6 +84,15 @@ async function withHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
     return await fn()
   } finally {
     set(previous)
+  }
+}
+
+/** Waits for what the worker does in the background, such as the ask of an AskUserQuestion call. */
+async function until(done: () => boolean, logs: readonly string[], ms = 20_000): Promise<void> {
+  const end = Date.now() + ms
+  while (!done()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for the worker; it logged: ${logs.join(' | ')}`)
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
 }
 
@@ -348,4 +368,57 @@ test('star stars the repository through gh, and passes on why gh could not', POS
   } finally {
     process.env.PATH = path
   }
+})
+
+test('Recommended points are recorded and removed through the CLI; another id is refused', async () => {
+  const { home, orca, logPath } = sandbox()
+  await withHome(home, async () => {
+    const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
+    assert.equal((await worker.request('inbox.list')).showRecommendations, true)
+    assert.deepEqual(await worker.request('inbox.addRecommended', { id: 'builtin.ask-question' }), { ok: true })
+    assert.deepEqual((await worker.request('inbox.list')).points.map((p) => p.id), ['build', 'builtin.ask-question'])
+    assert.deepEqual(readPoints(logPath)[1], RECOMMENDED[0])
+
+    assert.deepEqual(await worker.request('inbox.removeRecommended', { id: 'builtin.ask-question' }), { ok: true })
+    // the points of the workflow are an agent's to change
+    assert.deepEqual(await worker.request('inbox.addRecommended', { id: 'build' }), { ok: false, error: 'no recommended point build' })
+    assert.deepEqual(await worker.request('inbox.removeRecommended', { id: 'build' }), { ok: false, error: 'no recommended point build' })
+    assert.deepEqual(readPoints(logPath).map((p) => p.id), ['build'])
+    await worker.deactivate()
+
+    const off = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca, showRecommendations: false } }) })
+    assert.equal((await off.request('inbox.list')).showRecommendations, false)
+    await off.deactivate()
+  })
+})
+
+test("an agent's AskUserQuestion asks in its workspace and terminal while the point is recorded, and resolves once answered", async () => {
+  const { home, orca, logPath, workspace, calls } = sandbox()
+  const questions = { questions: [{ question: 'Ship  it\n now?', header: 'Ship', options: [], multiSelect: false }, { question: 'And tag it?', header: 'Tag', options: [], multiSelect: false }] }
+  const call = (tool: string, workspaceId = `app::${workspace}`) => ({ agent: 'claude', workspaceId, terminalId: 'term_q', tool, input: questions, callId: 'toolu_1' })
+  const asks = () => readEntries(logPath).filter((e) => e.key === 'PROJ-7')
+  await withHome(home, async () => {
+    const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
+    // every tool call goes on as it was, and only a recorded point sends
+    assert.deepEqual(await worker.hooks.fire('agent.tool.before', call('Bash')), { kind: 'continue', event: call('Bash') })
+    assert.equal((await worker.hooks.fire('agent.tool.before', call('AskUserQuestion'))).kind, 'continue')
+    assert.deepEqual(await worker.request('inbox.addRecommended', { id: 'builtin.ask-question' }), { ok: true })
+    // a workspace Orca does not list sends nothing either
+    await worker.hooks.fire('agent.tool.before', call('AskUserQuestion', 'app::/nowhere'))
+
+    await worker.hooks.fire('agent.tool.before', call('AskUserQuestion'))
+    await until(() => asks().length > 0, worker.logs)
+    assert.deepEqual(
+      asks().map((e) => [e.kind, e.message, e.worktree, e.terminal]),
+      [['ask', 'Ship it now? (1/2)', workspace, 'term_q']]
+    )
+    assert.ok(calls().includes(`worktree set --worktree path:${workspace} --workspace-status in-review --comment PROJ-7: Ship it now? (1/2) --unread --json`))
+
+    await worker.hooks.fire('agent.tool.after', { ...call('AskUserQuestion'), output: { answers: {} } })
+    await until(() => asks().length > 1, worker.logs)
+    assert.deepEqual(asks().map((e) => e.kind), ['ask', 'resolve'])
+    assert.equal(calls().filter((c) => c.startsWith('worktree set')).length, 2)
+    assert.deepEqual(worker.logs.filter((l) => l.startsWith('AskUserQuestion')), [])
+    await worker.deactivate()
+  })
 })

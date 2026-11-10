@@ -17,6 +17,8 @@ export interface InboxConfig {
   keepAsksUntilHandled: boolean
   /** Opening a message's link leaves it unread. */
   keepMessagesUntilRead: boolean
+  /** The panel shows Recommended points. */
+  showRecommendations: boolean
   language: Language
   /** Path of the orca CLI, '' to look for it. */
   orcaCli: string
@@ -30,6 +32,7 @@ export const DEFAULTS: InboxConfig = {
   resumeStatus: 'in-progress',
   keepAsksUntilHandled: false,
   keepMessagesUntilRead: false,
+  showRecommendations: true,
   language: 'auto',
   orcaCli: ''
 }
@@ -57,6 +60,7 @@ export function readConfig(raw: Record<string, unknown>, home: string): InboxCon
     resumeStatus: text(raw.resumeStatus, DEFAULTS.resumeStatus),
     keepAsksUntilHandled: raw.keepAsksUntilHandled === true,
     keepMessagesUntilRead: raw.keepMessagesUntilRead === true,
+    showRecommendations: raw.showRecommendations !== false,
     language,
     orcaCli: expandHome(text(raw.orcaCli, ''), home)
   }

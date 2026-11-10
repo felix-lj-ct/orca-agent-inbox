@@ -65,6 +65,8 @@ export interface Inbox {
   retentionDays: number
   /** Opening a message's link leaves it unread. */
   keepMessagesUntilRead: boolean
+  /** The panel shows Recommended points, after Wired points. */
+  showRecommendations: boolean
   language: Language
   setup: Setup
   /** First start without a log: the setup task waits on the person until they mark it handled. */
@@ -100,6 +102,10 @@ declare module 'orca' {
      * points' Add a point, Align and Remove. Fails with `no-workspace` when none is selected.
      */
     'inbox.launch': { input: { prompt: string }; output: ActionResult }
+    /** Records a recommended point (src/recommended.ts), which then works: no agent, no workflow file changes. */
+    'inbox.addRecommended': { input: { id: string }; output: ActionResult }
+    /** Removes the record of a recommended point, which stops it; it shows under Recommended points again. */
+    'inbox.removeRecommended': { input: { id: string }; output: ActionResult }
     /** Stars REPO with the person's GitHub account through their gh CLI; fails when gh is missing or signed out. */
     'inbox.star': { output: ActionResult }
   }

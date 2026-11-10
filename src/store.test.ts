@@ -285,7 +285,14 @@ test('hook gives an agent in an Orca terminal the brief, and an agent elsewhere 
   assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox resolve <key>/)
   assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox notify <key> /)
   assert.match(brief.stdout, /you judge what does/)
+  assert.equal(brief.stdout.includes('AskUserQuestion'), false)
   assert.deepEqual(await cliWith({ ORCA_TERMINAL_HANDLE: '' }, 'hook'), { code: 0, stdout: '', stderr: '' })
+  // with the recommended point recorded, questions asked with AskUserQuestion go by themselves
+  assert.equal((await cli('point', 'add', 'builtin.ask-question', 'ask', '<ticket or folder>', 'an agent asks', 'the Agent Inbox plugin')).code, 0)
+  const questions = await cli('hook')
+  assert.match(questions.stdout, /^- A question you ask with the AskUserQuestion tool reaches the panel by itself\.$/m)
+  assert.match(questions.stdout, /^- Before you stop for their decision, approval or help in another way, run$/m)
+  assert.match(questions.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox resolve <key>/)
   // it only prints: nothing is sent, nothing asks Orca
   assert.equal(readEntries(config.logPath).length, 0)
   assert.deepEqual(calls(), [])

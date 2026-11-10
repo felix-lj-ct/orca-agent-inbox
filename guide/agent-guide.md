@@ -87,6 +87,11 @@ is already in place. Use the same key names and the same notify wrapper as the p
 the records with what you found: a recorded point whose call is gone needs a `point remove`, and a call
 without a record needs a `point add` (snippet D).
 
+A record whose id starts with `builtin.` is a recommended point that the plugin wires itself: it has no call in
+the workflow, and the person adds and removes it in the panel, under **Recommended points** and **Wired
+points**. `builtin.ask-question` sends every question an agent asks with Claude Code's AskUserQuestion tool.
+`RECOMMENDED.md` in the plugin's repository lists them, and the points other people wire.
+
 Then ask the person only for the gaps: the stages from start to done, who or what runs each one (the person,
 an agent, a script, an Orca automation), and where they wait or get surprised today.
 
@@ -153,7 +158,7 @@ to send from (the person checks it by hand), list it under "Not wired" with the 
 | A script | One CLI call at the point; a failed message must not fail the job (snippet B) |
 | An Orca automation's precheck | A `notify` call in the precheck script (snippet B); see below |
 | An Orca automation's prompt | Nothing, when the agent of the run gets the brief (section 2): it judges. A result that must reach the person every time: a call in a script the run already runs (snippet B). Lines in the prompt (snippet C) only when neither is possible, or the person asks for them |
-| An agent event that the person wants sent every time (a question tool, a given command) | A hook on that event that runs a small script, which reads the hook's input and calls the CLI; for Claude Code a `PreToolUse` or `PostToolUse` hook with a `matcher`. A line in the instruction file (snippet C) only when the agent has no such hook |
+| An agent event that the person wants sent every time (a question tool, a given command) | Claude Code's AskUserQuestion: the recommended point `builtin.ask-question`, which the person adds in the panel; no hook. Another event: a hook on that event that runs a small script, which reads the hook's input and calls the CLI; for Claude Code a `PreToolUse` or `PostToolUse` hook with a `matcher`. A line in the instruction file (snippet C) only when the agent has no such hook |
 | A notify wrapper or channel the workflow already has | Point the wrapper at `agent-inbox`, so every caller moves at once |
 
 A hook that sends on every turn or every tool call (Claude Code's `Stop`, a `PostToolUse` hook without a
@@ -273,7 +278,8 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 1. Run `agent-inbox point list` and read what already sends (section 1, "Find what is already wired").
 2. If the person has not said what should send, ask them in one question. Offer up to three candidates
    that fit their workflow: the brief for an agent that does not get it yet (section 2), or points of their
-   scripts and automations (section 3).
+   scripts and automations (section 3). A recommended point not recorded yet needs no change from you: the
+   person presses **Add this point** under **Recommended points** in the panel.
 3. Check the point against the rules in section 3 ("Keep a point only if"). If it fails one, or the point
    already sends, say so and stop. If an agent with the brief would send it by its own judgment, say so: it
    needs no wiring, unless the person wants it sent every time (section 4).
@@ -285,7 +291,8 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 
 **Remove the point `<id>`:**
 
-1. Read the point from `agent-inbox point list`.
+1. Read the point from `agent-inbox point list`. If its id starts with `builtin.`, the plugin wires it: tell the
+   person to press **Remove** on it in the panel, and stop.
 2. Find its call. Look first in the place the point names ("wired in"), then in the places from section 1:
    search for `agent-inbox` calls with its key.
 3. Show the lines you will take out; wait for the OK. Keep what other points still use: the hook of section 2
@@ -312,6 +319,7 @@ records.
    | Found | Fix |
    | --- | --- |
    | A record and its call match | Nothing |
+   | A record whose id starts with `builtin.` | Nothing: the plugin wires it, without a call in the workflow |
    | A record and its call differ in command, key or place | `point add <the same id> ...` with the values of the call; the same id replaces the record |
    | A call without a record | `point add` (snippet D), with a new id |
    | A record without a call, and its key has not sent within the window | `point remove <id>` |

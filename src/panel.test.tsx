@@ -13,6 +13,7 @@ const inbox = (language: Inbox['language'], waiting = true): Inbox => ({
   points: [],
   retentionDays: 7,
   keepMessagesUntilRead: false,
+  showRecommendations: true,
   language,
   setup: { cli: '/h/.config/agent-inbox/bin/agent-inbox', guide: '/h/.config/agent-inbox/agent-guide.md', log: '/h/inbox.jsonl' },
   setupPending: false,
@@ -125,7 +126,8 @@ test('the setup task sends the person to Add a point and goes once handled', asy
     }
   })
   const view = await mount(panel, { host })
-  const body = 'Open Wired points below and press Add a point: your agent asks what should send here, wires it into your workflow and records it.'
+  const body =
+    'Open Wired points below and press Add a point: your agent asks what should send here, wires it into your workflow and records it. Recommended points, under it, wire in with one press.'
   try {
     assert.ok(view.find({ text: /^Waiting on you \(1\)/ }))
     assert.ok(view.find({ text: body }))
@@ -307,7 +309,12 @@ test('groups what waits by project, the project with the newest ask first', asyn
 
 test('lists the wired points, asks first, and says how they get there when there are none', async () => {
   const point = (id: string, kind: 'ask' | 'notify', when: string) => ({ id, kind, key: '<ticket>', when, wiredIn: 'CLAUDE.md (A)' })
-  let current: Inbox = { ...inbox('en', false), points: [point('build', 'notify', 'the build failed'), point('design', 'ask', 'a design decision')] }
+  // Recommended points, with badges of their own, hidden
+  let current: Inbox = {
+    ...inbox('en', false),
+    showRecommendations: false,
+    points: [point('build', 'notify', 'the build failed'), point('design', 'ask', 'a design decision')]
+  }
   const host = mockHost({ requests: { 'inbox.list': () => current } })
   const view = await mount(panel, { host })
   try {
@@ -404,5 +411,82 @@ test('Star stars through the worker and then only thanks; without gh it links to
     assert.deepEqual(view.refusals, [])
   } finally {
     await view.unmount()
+  }
+})
+
+test('a recommended point is added with one press and then shows under Wired points, where Remove stops it', async () => {
+  const requests: [string, unknown][] = []
+  let points: Inbox['points'] = []
+  const recorded = { id: 'builtin.ask-question', kind: 'ask' as const, key: '<ticket or folder>', when: 'An agent asks you with AskUserQuestion; it goes once you answer', wiredIn: 'the Agent Inbox plugin' }
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => ({ ...inbox('en', false), points }),
+      'inbox.addRecommended': (input) => {
+        requests.push(['add', input])
+        points = [recorded]
+        return { ok: true }
+      },
+      'inbox.removeRecommended': (input) => {
+        requests.push(['remove', input])
+        points = []
+        return { ok: true }
+      },
+      'inbox.launch': (input) => {
+        requests.push(['launch', input])
+        return { ok: true }
+      }
+    }
+  })
+  const view = await mount(panel, { host })
+  try {
+    // after Wired points, open, with the link to every recommended point
+    assert.ok(view.find({ type: 'Collapsible', label: 'Recommended points (1)' }))
+    assert.ok(view.find({ type: 'Text', text: 'Picked from what people wire' }))
+    assert.equal(view.find({ type: 'Link', text: 'RECOMMENDED.md on GitHub' })?.props.href, 'https://github.com/felix-lj-ct/orca-agent-inbox/blob/main/RECOMMENDED.md')
+    assert.ok(view.find({ text: 'Agent questions wait on you' }))
+    assert.equal(view.find({ text: 'Remove' }), null)
+
+    await view.press({ text: 'Add this point' })
+    assert.deepEqual(requests, [['add', { id: 'builtin.ask-question' }]])
+    assert.ok(view.find({ type: 'Collapsible', label: 'Recommended points (0)' }))
+    assert.ok(view.find({ text: 'You have added every recommended point.' }))
+    // Wired points opened on the record, in the panel's words
+    assert.equal(view.persisted.plugin.pointsOpen, true)
+    assert.ok(view.find({ text: 'An agent asks you with AskUserQuestion; it goes once you answer' }))
+    assert.ok(view.find({ text: 'key <ticket or folder> · the Agent Inbox plugin' }))
+
+    // the plugin wires it, so Remove takes it out without an agent
+    await view.press({ text: 'Remove' })
+    assert.deepEqual(requests.slice(1), [['remove', { id: 'builtin.ask-question' }]])
+    assert.ok(view.find({ type: 'Collapsible', label: 'Recommended points (1)' }))
+    assert.deepEqual(view.errors, [])
+    assert.deepEqual(view.refusals, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('the settings hide Recommended points, while an added one stays under Wired points; Chinese names it in Chinese', async () => {
+  const recorded = { id: 'builtin.ask-question', kind: 'ask' as const, key: '<ticket or folder>', when: 'An agent asks you with AskUserQuestion; it goes once you answer', wiredIn: 'the Agent Inbox plugin' }
+  const host = mockHost({ requests: { 'inbox.list': () => ({ ...inbox('zh-CN', false), points: [recorded], showRecommendations: false }) } })
+  const view = await mount(panel, { host, persisted: { plugin: { pointsOpen: true } } })
+  try {
+    assert.equal(view.find({ type: 'Collapsible', label: /^推荐接入点/ }), null)
+    assert.ok(view.find({ type: 'Collapsible', label: '接入点（1）' }))
+    assert.ok(view.find({ text: 'agent 用 AskUserQuestion 向你提问；回答后自动移走' }))
+    assert.ok(view.find({ text: 'key：<ticket 或目录名> · Agent Inbox 插件' }))
+    assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+
+  const shown = await mount(panel, { host: mockHost({ requests: { 'inbox.list': () => inbox('zh-CN', false) } }) })
+  try {
+    assert.ok(shown.find({ type: 'Collapsible', label: '推荐接入点（1）' }))
+    assert.ok(shown.find({ text: 'agent 提问时等你处理' }))
+    assert.ok(shown.find({ type: 'Button', text: '接入' }))
+    assert.ok(shown.find({ type: 'Link', text: 'GitHub 上的 RECOMMENDED.md' }))
+  } finally {
+    await shown.unmount()
   }
 })

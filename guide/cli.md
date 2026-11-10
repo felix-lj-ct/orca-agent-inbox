@@ -26,7 +26,7 @@ plugin is installed.
 | `ask [--worktree <path>] <key> "<message>" [<url>]` | A card under Waiting on you with the message, and **Open link** when you give a URL; the workspace moves to the waiting column with `<key>: <message>` as its comment and an unread dot | Inside an Orca workspace, or anywhere with `--worktree` | Yes |
 | `resolve [--worktree <path>] <key>` | The card goes (or, if the person keeps asks until they mark them handled, says the agent resumed); the workspace moves back to the resolved column, if it is still in the waiting column | The workspace of the `ask` | Yes |
 | `test [--worktree <path>]` | A TEST card under Waiting on you; `resolve TEST` removes it | An Orca workspace | Yes |
-| `hook` | Nothing: it prints the brief, a few lines that tell an agent about the inbox and its commands and leave to it what to send | An agent's session-start hook; it prints nothing outside an Orca terminal | No |
+| `hook` | Nothing: it prints the brief, a few lines that tell an agent about the inbox and its commands and leave to it what to send; while the point `builtin.ask-question` is recorded, the brief also says that a question asked with AskUserQuestion reaches the panel by itself | An agent's session-start hook; it prints nothing outside an Orca terminal | No |
 | `point add <id> <ask\|notify> <key> "<when>" "<wired in>"` | A row under Wired points; the same id again replaces it | Anywhere | No |
 | `point remove <id>` | The row goes | Anywhere | No |
 | `point list` | Nothing: it prints the recorded points, one JSON object per line | Anywhere | No |
@@ -65,7 +65,8 @@ plugin is installed.
 A point is a place in the workflow that sends. `point add` records it for the panel's Wired points; it sends
 nothing itself.
 
-- `<id>` is letters, digits, `.`, `_` or `-`.
+- `<id>` is letters, digits, `.`, `_` or `-`. Ids that start with `builtin.` are the recommended points, which
+  the plugin wires itself: the person adds and removes them in the panel.
 - `<key>` is the key that the point sends: a placeholder such as `<ticket>` when it varies.
 - `<when>` says when it sends; `<wired in>` names the file, script, hook or automation that sends it.
 - `point list` prints one JSON object per line, with `id`, `kind`, `key`, `when`, `wiredIn` and `ts`.

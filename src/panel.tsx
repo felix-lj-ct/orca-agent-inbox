@@ -28,6 +28,7 @@ import {
 } from 'orca'
 import { strings } from './i18n'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type WaitingItem, type WiredPoint } from './protocol'
+import { RECOMMENDED, RECOMMENDED_URL, recommended } from './recommended'
 
 const REFRESH_MS = 60_000
 /** The longest a request may wait: the worker reads the board, then gives the agent up to a minute to start. */
@@ -42,6 +43,8 @@ const messagesOpen = atom(true)
 const messagesTab = atom<'unread' | 'read'>('unread')
 /** Wired points stay open or closed as the person left them; a run ends whenever another sidebar tab shows. */
 const pointsOpen = atom('pointsOpen', false, { persist: 'plugin' })
+/** Recommended points: open until the person closes them, then as left. */
+const recommendedOpen = atom('recommendedOpen', true, { persist: 'plugin' })
 /** The footer's Star worked once; it then only says thanks. */
 const starred = atom('starred', false, { persist: 'plugin' })
 /** busy while gh stars; failed: gh is missing or signed out, so the footer links to the page for this run. */
@@ -97,6 +100,11 @@ const openMessage = async (m: InboxMessage) => {
 const finishSetup = () => act(plugin.request('inbox.setupDone'), refresh)
 /** The agent opens focused in the selected workspace; the points list follows its `point add` or `point remove`. */
 const launch = (prompt: string) => act(plugin.request('inbox.launch', { prompt }, { timeoutMs: LAUNCH_TIMEOUT_MS }))
+/** Wired points opens on the new record, so the person sees where it went and where Remove is. */
+async function addRecommended(p: WiredPoint): Promise<void> {
+  if (await act(plugin.request('inbox.addRecommended', { id: p.id }), refresh)) set(pointsOpen, true)
+}
+const removeRecommended = (p: WiredPoint) => act(plugin.request('inbox.removeRecommended', { id: p.id }), refresh)
 
 /** Not through act: a star that fails is no problem of the inbox, so it stays in the footer. */
 async function star(): Promise<void> {
@@ -314,20 +322,32 @@ function messagesSection(data: Inbox) {
   )
 }
 
-/** Where the point shows as a badge, then when it sends; under it the key, the place that sends, and Remove. */
+/**
+ * Where the point shows as a badge, then when it sends; under it the key, the place that sends, and Remove. A
+ * recommended point shows in the panel's language, and Remove takes it out at once, since the plugin wires it;
+ * the others an agent takes out of the workflow.
+ */
 function pointRow(p: WiredPoint, guide: string) {
   const s = t()
+  const own = recommended(p.id) !== undefined
+  const shown = { ...p, ...(own ? s.recommendedPoints[p.id] : undefined) }
   return (
     <Stack gap="xs">
       <Row gap="sm" align="center">
         <Badge tone={p.kind === 'ask' ? 'accent' : 'neutral'}>{s.pointKind(p.kind)}</Badge>
-        <Text size="sm">{p.when}</Text>
+        <Text size="sm">{shown.when}</Text>
       </Row>
       <Row justify="between" align="center" gap="sm">
         <Text muted size="xs">
-          {s.pointDetail(p.key, p.wiredIn)}
+          {s.pointDetail(shown.key, shown.wiredIn)}
         </Text>
-        <Button size="xs" variant="outline" icon="delete" tooltip={s.removePointTip} onPress={() => launch(s.removePointPrompt(guide, p))}>
+        <Button
+          size="xs"
+          variant="outline"
+          icon="delete"
+          tooltip={own ? s.removeRecommendedTip : s.removePointTip}
+          onPress={() => (own ? removeRecommended(p) : launch(s.removePointPrompt(guide, p)))}
+        >
           {s.removePoint}
         </Button>
       </Row>
@@ -363,6 +383,56 @@ function pointsSection(points: WiredPoint[], guide: string) {
       ) : (
         ordered.map((p) => pointRow(p, guide))
       )}
+    </>
+  )
+}
+
+/** A recommended point not added yet, as a tile like an ask: where it shows and what it does, then Add. */
+function recommendationTile(p: WiredPoint) {
+  const s = t()
+  const text = s.recommendedPoints[p.id]
+  return (
+    <Box border="neutral" radius="md" paddingX="md" paddingY="sm" gap="sm">
+      <Row gap="sm" align="center">
+        <Badge tone={p.kind === 'ask' ? 'accent' : 'neutral'}>{s.pointKind(p.kind)}</Badge>
+        <Text size="sm" weight="semibold">
+          {text?.title ?? p.when}
+        </Text>
+      </Row>
+      {text !== undefined && <Text size="sm">{text.description}</Text>}
+      <Row gap="xs" align="center">
+        <Button size="sm" variant="solid" tone="accent" icon="add" tooltip={s.addRecommendedTip} onPress={() => addRecommended(p)}>
+          {s.addRecommended}
+        </Button>
+      </Row>
+    </Box>
+  )
+}
+
+/**
+ * The recommended points not recorded yet (src/recommended.ts), after Wired points, where an added one goes. The
+ * settings can hide this section; a point already added keeps working and stays under Wired points.
+ */
+function recommendedSection(points: WiredPoint[]) {
+  const s = t()
+  const pending = RECOMMENDED.filter((r) => !points.some((p) => p.id === r.id))
+  return notedSection(
+    s.recommendations(pending.length),
+    s.recommendationsNote,
+    read(recommendedOpen),
+    (open) => set(recommendedOpen, open),
+    <>
+      {pending.length === 0 ? (
+        <Text muted size="sm">
+          {s.noRecommendations}
+        </Text>
+      ) : (
+        <Stack gap="sm">{pending.map(recommendationTile)}</Stack>
+      )}
+      <Text muted size="xs">
+        {s.moreRecommendations}
+        <Link href={RECOMMENDED_URL}>{s.recommendedOnGitHub}</Link>
+      </Text>
     </>
   )
 }
@@ -450,6 +520,8 @@ function inboxView(data: Inbox, error: string | null) {
       {messagesSection(data)}
       <Separator />
       {pointsSection(data.points, data.setup.guide)}
+      {data.showRecommendations && <Separator />}
+      {data.showRecommendations && recommendedSection(data.points)}
     </Stack>
   )
 }
