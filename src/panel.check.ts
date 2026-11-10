@@ -3,7 +3,7 @@
 // Chinese. `cover` answers inbox.list with made-up data instead, Wired points open, for the listing images:
 // orca plugin shot . --scenario cover --theme dark
 // `kept` shows the same in Chinese with an ask the agent resolved, kept until marked handled. `first-start` shows
-// the setup task alone.
+// the setup task alone. `recommended` and `recommended-zh` show Recommended points with nothing added yet.
 import { defineCheck } from 'orca/testing'
 import type { Inbox, InboxMessage } from './protocol'
 
@@ -77,6 +77,7 @@ const cover: Inbox = {
   ],
   retentionDays: 7,
   keepMessagesUntilRead: false,
+  showRecommendations: false,
   language: 'en',
   setup: {
     cli: '~/.config/agent-inbox/bin/agent-inbox',
@@ -101,6 +102,14 @@ export default defineCheck({
     settings: { language: 'zh-CN' },
     requests: {
       'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], setupPending: true })
+    }
+  },
+  // Recommended points with nothing added, in English and in Chinese: nothing above them but closed sections
+  recommended: { requests: { 'inbox.list': () => ({ ...cover, waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], showRecommendations: true }) } },
+  'recommended-zh': {
+    settings: { language: 'zh-CN' },
+    requests: {
+      'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], showRecommendations: true })
     }
   },
   // a shot stops at the window's height: with nothing above them, the wired points fit in one

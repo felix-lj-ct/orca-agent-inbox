@@ -9,6 +9,8 @@ An [Orca](https://onorca.dev) plugin: one sidebar panel for what your agents and
 - **Messages**: what you should know (a long job failed, a credential expired), kept 7 days by default.
 - **Wired points**: the places in your workflow that send here. **Add a point**, **Align** and **Remove** have
   your agent make the change once you agree.
+- **Recommended points**: points Agent Inbox wires itself, added with one press, such as the questions your
+  agents ask with AskUserQuestion. See [Recommended points](#recommended-points).
 
 Agents and scripts send with one CLI, `agent-inbox`.
 
@@ -37,7 +39,8 @@ Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Wind
    ~/.config/agent-inbox/bin/agent-inbox resolve TEST   # it goes away
    ```
 
-4. **Wire your workflow.** The setup task sends you to **Wired points**: press **Add a point** there. Your default
+4. **Wire your workflow.** Under **Recommended points**, press **Add this point** on the ones you want: they work
+   at once. The setup task sends you to **Wired points**: press **Add a point** there for the rest. Your default
    agent starts in the workspace selected in Orca, asks you what should send here, wires it in and records it.
    Then press **Mark handled** on the setup task.
 
@@ -90,6 +93,22 @@ Claude Code, add it to the `SessionStart` hooks in `~/.claude/settings.json`, be
 ```
 
 An agent without such a hook gets the same lines in its global instruction file.
+
+## Recommended points
+
+**Recommended points**, after **Wired points**, lists points that Agent Inbox wires itself. **Add this point**
+records one under **Wired points**, and it works from then on; **Remove** there stops it. No agent runs, and no
+file of your workflow changes.
+
+- **Agent questions wait on you** (`builtin.ask-question`): when an agent asks you with the AskUserQuestion tool
+  (Claude Code has it), its workspace goes under **Waiting on you** with the first question, and goes once you
+  answer or dismiss it. The key is the ticket id in the branch or the folder name, else the folder name. Orca
+  does not hook agents on SSH hosts or in WSL yet. If you wired AskUserQuestion yourself with a hook, remove that
+  hook once you add this point, or each question is sent twice.
+
+[`RECOMMENDED.md`](RECOMMENDED.md) collects the points people wire, and each release picks some of them for the
+panel. To suggest yours, open a pull request that adds it there. The panel shows what came with your version and
+does not read the page. To hide the section, turn off **Show recommended points** in the settings.
 
 ## The CLI
 
@@ -155,11 +174,16 @@ Two switches, both off by default, leave it to you to say when something is done
 - **Keep messages unread until marked read**: opening a message's link leaves it unread until you press
   **Mark read** or **Mark all read**.
 
+**Show recommended points**, on by default, shows [Recommended points](#recommended-points) after **Wired
+points**. Off, the section goes; a recommended point you added keeps working and stays under **Wired points**.
+
 ## Permissions
 
 The plugin runs as a `trusted-worker`, a Node.js process with your user's access. It runs the `orca` CLI to read
 and move the board and to start your agent, reads which agent is your default from Orca's profile state, and
-writes `~/.config/agent-inbox/` and the log. On Windows it also runs `wsl.exe` to
+writes `~/.config/agent-inbox/` and the log. Orca runs its hook before and after each tool call of the agents in
+its terminals: the plugin lets every call go on at once, and acts only on AskUserQuestion, while that
+[recommended point](#recommended-points) is recorded. On Windows it also runs `wsl.exe` to
 list the running WSL distros and link `~/.config/agent-inbox` in those with a workspace in Orca. Its only network request is **Star on GitHub**, made through your
 `gh` CLI when you press it.
 

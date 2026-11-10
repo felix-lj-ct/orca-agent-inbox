@@ -1,6 +1,16 @@
 // The panel's strings. "auto" follows Orca's interface language (env.locale).
 import type { Language } from './config'
 import type { WiredPoint } from './protocol'
+import { ASK_QUESTION } from './recommended'
+
+/** What a recommended point (src/recommended.ts) is called and does, and its record as the panel shows it. */
+export interface RecommendedText {
+  title: string
+  description: string
+  when: string
+  key: string
+  wiredIn: string
+}
 
 const en = {
   waiting: (n: number) => `Waiting on you (${n})`,
@@ -41,6 +51,26 @@ const en = {
   alignPoints: 'Align',
   alignPointsTip: 'Start your default agent in the selected workspace to check the records against the calls in your workflow; it changes only the records, once you agree',
   noWorkspace: 'Select a workspace in Orca first; the agent starts there',
+  recommendations: (n: number) => `Recommended points (${n})`,
+  recommendationsNote: 'Picked from what people wire',
+  /** by id; the record keeps the English of src/recommended.ts */
+  recommendedPoints: {
+    [ASK_QUESTION]: {
+      title: 'Agent questions wait on you',
+      description:
+        'When an agent asks you with AskUserQuestion, its workspace shows under Waiting on you with the question, and goes once you answer. For Claude Code in Orca terminals on this computer; not yet on SSH or in WSL.',
+      when: 'An agent asks you with AskUserQuestion; it goes once you answer',
+      key: '<ticket or folder>',
+      wiredIn: 'the Agent Inbox plugin'
+    }
+  } as Record<string, RecommendedText>,
+  addRecommended: 'Add this point',
+  addRecommendedTip: 'Wire it in and record it under Wired points; Remove there stops it',
+  removeRecommendedTip: 'Stop this point and take it off the list; it shows under Recommended points again',
+  noRecommendations: 'You have added every recommended point.',
+  /** the link follows it */
+  moreRecommendations: 'More points, and how to suggest yours: ',
+  recommendedOnGitHub: 'RECOMMENDED.md on GitHub',
   addPointPrompt: (guide: string) =>
     `Read ${guide} and add one Agent Inbox point to my workflow: ask me what should send, wire it where it belongs, and record it with agent-inbox point add.`,
   removePointPrompt: (guide: string, p: WiredPoint) =>
@@ -55,7 +85,8 @@ const en = {
   setup: 'Set up Agent Inbox',
   setupDescription: 'How agents and scripts send to this panel',
   setupDoneTip: 'Hide this task for good; Add a point stays under Wired points',
-  setupBody: 'Open Wired points below and press Add a point: your agent asks what should send here, wires it into your workflow and records it.',
+  setupBody:
+    'Open Wired points below and press Add a point: your agent asks what should send here, wires it into your workflow and records it. Recommended points, under it, wire in with one press.',
   starAsk: 'Find Agent Inbox useful?',
   star: 'Star on GitHub',
   starTip: 'Star felix-lj-ct/orca-agent-inbox with your GitHub account, through your gh CLI',
@@ -103,6 +134,24 @@ const zhCN: Strings = {
   alignPoints: '对齐',
   alignPointsTip: '在当前选中的工作区打开默认 agent，把登记表和工作流里的实际调用逐个对照；只改登记表，并且要你确认',
   noWorkspace: '先在 Orca 里选中一个工作区，agent 会在那里打开',
+  recommendations: (n) => `推荐接入点（${n}）`,
+  recommendationsNote: '从大家的接入里挑选',
+  recommendedPoints: {
+    [ASK_QUESTION]: {
+      title: 'agent 提问时等你处理',
+      description:
+        'agent 用 AskUserQuestion 向你提问时，它的工作区带着问题出现在「等你处理」，你回答后自动移走。适用于本机 Orca 终端里的 Claude Code；SSH 和 WSL 暂不支持。',
+      when: 'agent 用 AskUserQuestion 向你提问；回答后自动移走',
+      key: '<ticket 或目录名>',
+      wiredIn: 'Agent Inbox 插件'
+    }
+  },
+  addRecommended: '接入',
+  addRecommendedTip: '接入并登记到「接入点」；在那里点「移除」就停止',
+  removeRecommendedTip: '停止这个接入点并从列表移除；它会回到「推荐接入点」',
+  noRecommendations: '推荐的接入点都已接入。',
+  moreRecommendations: '更多推荐接入点，以及怎么提交你的：',
+  recommendedOnGitHub: 'GitHub 上的 RECOMMENDED.md',
   addPointPrompt: (guide) => `读 ${guide}，给我的工作流新增一个 Agent Inbox 接入点：先问我在什么场景发，接到它该在的位置，再用 agent-inbox point add 登记。`,
   removePointPrompt: (guide, p) =>
     `读 ${guide}，移除 Agent Inbox 接入点 ${p.id}（${p.when}；接在 ${p.wiredIn}）：把它的调用从我的工作流里去掉，再运行 agent-inbox point remove ${p.id}。`,
@@ -116,7 +165,7 @@ const zhCN: Strings = {
   setup: '接入 Agent Inbox',
   setupDescription: 'agent 和脚本怎么把消息发到这里',
   setupDoneTip: '不再显示这个待办；之后随时可以在「接入点」里新增',
-  setupBody: '点开下方「接入点」，点「新增接入点」：agent 会先问你在什么场景发，再接进工作流并登记。',
+  setupBody: '点开下方「接入点」，点「新增接入点」：agent 会先问你在什么场景发，再接进工作流并登记。它下面的「推荐接入点」点一下就能接入。',
   starAsk: '觉得 Agent Inbox 好用？',
   star: '在 GitHub 点 Star',
   starTip: '用你的 GitHub 账号，通过本机的 gh 命令给 felix-lj-ct/orca-agent-inbox 点 Star',

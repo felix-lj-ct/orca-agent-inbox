@@ -42,10 +42,19 @@ const USAGE = `  agent-inbox notify <key> <message> [<url>]
       print the settings in use
 `
 
+// The recommended point the plugin wires itself (src/recommended.ts in the plugin): while it is recorded, a
+// question an agent asks with AskUserQuestion goes under Waiting on you without the agent running ask.
+const ASK_QUESTION = 'builtin.ask-question'
+
 // What an agent reads at the start of each session, through its session-start hook. It says what the inbox is
 // and how to send, and leaves what to send to the agent.
-const BRIEF = `Agent Inbox is on: Orca shows the person a panel of what waits on them and of the messages sent to it. They may not be watching this terminal. Send to it what matters to them; you judge what does.
-- Before you stop for their decision, approval or help, run
+const brief = (questions) => `Agent Inbox is on: Orca shows the person a panel of what waits on them and of the messages sent to it. They may not be watching this terminal. Send to it what matters to them; you judge what does.
+${
+  questions
+    ? `- A question you ask with the AskUserQuestion tool reaches the panel by itself.
+- Before you stop for their decision, approval or help in another way, run`
+    : '- Before you stop for their decision, approval or help, run'
+}
     ~/.config/agent-inbox/bin/agent-inbox ask <key> "<what you need, one line>"
   and once they answer and you go on, run
     ~/.config/agent-inbox/bin/agent-inbox resolve <key>
@@ -309,7 +318,7 @@ function main(argv) {
     case 'hook':
       // The agent passes the session on stdin; the brief needs none of it. Outside an Orca terminal the panel
       // cannot take the person to the agent, so the agent hears nothing.
-      return process.env.ORCA_TERMINAL_HANDLE ? out(BRIEF) : undefined
+      return process.env.ORCA_TERMINAL_HANDLE ? out(brief(hasPoint(ASK_QUESTION))) : undefined
     case 'where':
       return out(
         `log      ${LOG}\npoints   ${POINTS}\nwaiting  ${WAITING}\nresolved ${RESUME}\norca     ${findOrca() ?? 'not found'}\nconfig   ${CONFIG}\n`

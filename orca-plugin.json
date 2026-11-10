@@ -32,6 +32,7 @@
         "ui": "components"
       }
     ],
+    "hooks": [{ "event": "agent.tool.before" }, { "event": "agent.tool.after" }],
     "settings": [
       {
         "key": "logPath",
@@ -79,6 +80,13 @@
         "description": "On: opening a message's link leaves it unread until you press Mark read or Mark all read. Off: opening its link marks it read.",
         "type": "boolean",
         "default": false
+      },
+      {
+        "key": "showRecommendations",
+        "title": "Show recommended points",
+        "description": "On: the panel shows Recommended points after Wired points: points Agent Inbox wires itself, added with one press. Off: the section goes; a recommended point you added keeps working and stays under Wired points, where Remove stops it.",
+        "type": "boolean",
+        "default": true
       },
       {
         "key": "language",

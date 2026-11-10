@@ -41,6 +41,12 @@ test('asks and messages are kept until marked only when the settings say true', 
   assert.deepEqual([odd.keepAsksUntilHandled, odd.keepMessagesUntilRead], [false, false])
 })
 
+test('recommended points show unless the settings say false', () => {
+  assert.equal(readConfig({}, HOME).showRecommendations, true)
+  assert.equal(readConfig({ showRecommendations: 'false' }, HOME).showRecommendations, true)
+  assert.equal(readConfig({ showRecommendations: false }, HOME).showRecommendations, false)
+})
+
 test('config.json holds what the CLI reads, quotes and backslashes included', () => {
   const config = readConfig({ logPath: "C:\\Users\\it's \"here\"\\inbox.jsonl", waitingStatus: 'needs-me', orcaCli: '/opt/orca' }, HOME)
   const read = JSON.parse(renderConfig(config))
