@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "agent-inbox",
   "name": "Agent Inbox",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "What your agents and scripts wait on you for, in one sidebar panel: workspaces they parked on the board with the reason, and the messages they sent. They call one CLI at the points of your workflow that need you.",
   "license": "MIT",
   "author": {
