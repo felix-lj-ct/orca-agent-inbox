@@ -439,10 +439,14 @@ test('a recommended point is added with one press and then shows under Wired poi
   })
   const view = await mount(panel, { host })
   try {
-    // after Wired points, open, with the link to every recommended point
+    // after Wired points, open, with the link to the discussions where people share theirs
     assert.ok(view.find({ type: 'Collapsible', label: 'Recommended points (1)' }))
     assert.ok(view.find({ type: 'Text', text: 'Picked from what people wire' }))
-    assert.equal(view.find({ type: 'Link', text: 'RECOMMENDED.md on GitHub' })?.props.href, 'https://github.com/felix-lj-ct/orca-agent-inbox/blob/main/RECOMMENDED.md')
+    assert.ok(view.find({ text: /^See the points others wire, and share yours: / }))
+    assert.equal(
+      view.find({ type: 'Link', text: 'GitHub Discussions' })?.props.href,
+      'https://github.com/felix-lj-ct/orca-agent-inbox/discussions/categories/recommended-points'
+    )
     assert.ok(view.find({ text: 'Agent questions wait on you' }))
     assert.equal(view.find({ text: 'Remove' }), null)
 
@@ -485,7 +489,7 @@ test('the settings hide Recommended points, while an added one stays under Wired
     assert.ok(shown.find({ type: 'Collapsible', label: '推荐接入点（1）' }))
     assert.ok(shown.find({ text: 'agent 提问时等你处理' }))
     assert.ok(shown.find({ type: 'Button', text: '接入' }))
-    assert.ok(shown.find({ type: 'Link', text: 'GitHub 上的 RECOMMENDED.md' }))
+    assert.ok(shown.find({ type: 'Link', text: 'GitHub 讨论区' }))
   } finally {
     await shown.unmount()
   }

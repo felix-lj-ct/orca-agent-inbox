@@ -1,0 +1,49 @@
+# The form of a new discussion under Recommended points: a point someone wires in their workflow. Each release
+# picks some of them for RECOMMENDED.md and for the panel. GitHub reads this file by the category's slug.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a point you wire in your workflow: a place that sends to Agent Inbox. Each release picks some of
+        them for [RECOMMENDED.md](https://github.com/felix-lj-ct/orca-agent-inbox/blob/main/RECOMMENDED.md) and
+        for the panel. A good point sends what the person would otherwise miss or wait for, sends it once, and
+        never fails the job it is in. The log is a plain text file: put no secrets in the message, the link or
+        the change below.
+  - type: dropdown
+    id: shows-under
+    attributes:
+      label: Shows under
+      options:
+        - Waiting on you (ask)
+        - Messages (notify)
+        - Both
+    validations:
+      required: true
+  - type: input
+    id: key
+    attributes:
+      label: Key
+      description: The key it sends, or a placeholder such as <ticket> when it varies.
+    validations:
+      required: true
+  - type: textarea
+    id: when
+    attributes:
+      label: Sends when
+      description: When it sends, and for an ask, when it no longer waits.
+    validations:
+      required: true
+  - type: input
+    id: wired-in
+    attributes:
+      label: Wired in
+      description: The hook, script or automation that sends, and the agent or tool it needs.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: The change that wires it
+      description: The hook setting, or the lines of the script, in a code block.
+    validations:
+      required: true
