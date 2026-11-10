@@ -40,9 +40,14 @@ Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Wind
 
    > Read ~/.config/agent-inbox/agent-guide.md, go through my workflow, and tell me where to send Agent Inbox messages and how to wire each one.
 
-   The agent reads your instruction files, scripts and Orca automations, and proposes where to send (decision
-   gates, approvals, failed jobs, expired credentials) with the exact change for each. It changes nothing until
-   you agree. Then press **Mark handled** on the setup task.
+   The agent reads your agents' settings, instruction files, scripts and Orca automations, and proposes, with
+   the exact change for each:
+
+   - a hook that tells your agents about the inbox when a session starts, so that they judge for themselves
+     what is worth sending (see [Tell your agents](#tell-your-agents));
+   - where your scripts and automations should send (failed jobs, expired credentials, retries used up).
+
+   It changes nothing until you agree. Then press **Mark handled** on the setup task.
 
 Later, press **Add a point** in the panel to wire one more point, or give the same prompt with a workflow's name
 in place of "my workflow".
@@ -61,12 +66,32 @@ New-Item -ItemType Directory -Force "$HOME\.claude\skills\agent-inbox" | Out-Nul
 New-Item -ItemType SymbolicLink -Force -Path "$HOME\.claude\skills\agent-inbox\SKILL.md" -Target "$HOME\.config\agent-inbox\agent-guide.md"
 ```
 
+## Tell your agents
+
+An agent that knows the inbox is there judges for itself what you need to decide or know, so you write no rules
+for it. `agent-inbox hook` prints a few lines that tell it: the panel, the commands, and that it decides what is
+worth sending. Run it from the agent's session-start hook; it prints nothing outside an Orca terminal. For
+Claude Code, add it to the `SessionStart` hooks in `~/.claude/settings.json`, beside the hooks already there:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "~/.config/agent-inbox/bin/agent-inbox hook" }] }
+    ]
+  }
+}
+```
+
+An agent without such a hook gets the same lines in its global instruction file.
+
 ## The CLI
 
 ```sh
 agent-inbox notify <key> "<message>" [<url>]   # a line under Messages
 agent-inbox ask <key> "<message>" [<url>]      # this workspace waits on you
 agent-inbox resolve <key>                      # it no longer does
+agent-inbox hook                               # what an agent needs to know to send here
 ```
 
 `<key>` names the work: a ticket id, a job name. Run `agent-inbox` with no arguments for every command. Add

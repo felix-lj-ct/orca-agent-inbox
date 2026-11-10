@@ -274,6 +274,22 @@ test('resolve leaves a workspace the person already moved on alone', async () =>
   assert.equal(readEntries(config.logPath)[0].kind, 'resolve')
 })
 
+test('hook gives an agent in an Orca terminal the brief, and an agent elsewhere nothing', async () => {
+  const { home, config, calls, cli, cliWith } = sandbox()
+  install(config, home, ROOT)
+  const brief = await cli('hook')
+  assert.equal(brief.code, 0)
+  assert.match(brief.stdout, /^Agent Inbox is on: /)
+  assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox ask <key> /)
+  assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox resolve <key>/)
+  assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox notify <key> /)
+  assert.match(brief.stdout, /you judge what does/)
+  assert.deepEqual(await cliWith({ ORCA_TERMINAL_HANDLE: '' }, 'hook'), { code: 0, stdout: '', stderr: '' })
+  // it only prints: nothing is sent, nothing asks Orca
+  assert.equal(readEntries(config.logPath).length, 0)
+  assert.deepEqual(calls(), [])
+})
+
 test('usage errors exit 2 and a missing orca CLI exits 3 without logging the ask', async () => {
   const { home, config, workspace, cli, env } = sandbox()
   install(config, home, ROOT)
