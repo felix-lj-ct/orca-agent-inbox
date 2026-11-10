@@ -75,19 +75,54 @@ export function openAsks(entries: Entry[]): Map<string, Entry> {
 }
 
 /**
- * The lines a prune keeps, in order: every line inside the retention window, plus the open ask of each
- * workspace however old (the panel still shows when and why it asked). Broken lines go.
+ * With asks kept until handled: when the setting went on, and per workspace path the id (messageId) of the ask
+ * the person last marked handled.
  */
-export function keepLines(lines: string[], now: number, retentionDays: number): string[] {
+export interface Hold {
+  since: number
+  handled: Record<string, string>
+}
+
+/**
+ * Per workspace path (see pathKey), its last ask while asks are kept until handled: open or not, unless a resolve
+ * closed it before the setting went on or the person marked it handled.
+ */
+export function heldAsks(entries: Entry[], hold: Hold): Map<string, Entry> {
+  const held = new Map<string, Entry>()
+  for (const entry of entries) {
+    if (!entry.worktree) continue
+    if (entry.kind === 'ask') held.set(pathKey(entry.worktree), entry)
+    else if (entry.kind === 'resolve' && entry.at < hold.since) held.delete(pathKey(entry.worktree))
+  }
+  for (const [path, ask] of held) if (hold.handled[path] === messageId(ask)) held.delete(path)
+  return held
+}
+
+/**
+ * The lines a prune keeps, in order: every line inside the retention window, plus the open ask of each
+ * workspace however old (the panel still shows when and why it asked), and with a hold each held ask with the
+ * resolves after it, which say the agent went on. Broken lines go.
+ */
+export function keepLines(lines: string[], now: number, retentionDays: number, hold?: Hold): string[] {
   const from = now - retentionDays * DAY
   const parsed = lines.map((raw) => ({ raw, entry: parseLine(raw) }))
-  const stillOpen = new Set(openAsks(parsed.flatMap((p) => p.entry ?? [])).values())
-  return parsed.filter(({ entry }) => entry !== null && (entry.at >= from || stillOpen.has(entry))).map((p) => p.raw)
+  const entries = parsed.flatMap((p) => p.entry ?? [])
+  const keep = new Set(openAsks(entries).values())
+  if (hold) {
+    const held = heldAsks(entries, hold)
+    const reached = new Set<string>()
+    for (const entry of entries) {
+      const path = entry.worktree === null ? '' : pathKey(entry.worktree)
+      if (held.get(path) === entry) reached.add(path)
+      if (reached.has(path) && (entry.kind === 'ask' || entry.kind === 'resolve')) keep.add(entry)
+    }
+  }
+  return parsed.filter(({ entry }) => entry !== null && (entry.at >= from || keep.has(entry))).map((p) => p.raw)
 }
 
 const hashId = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16)
 
-/** Short, so Mark read can send many in one request (a request input stops at 64 KiB). */
+/** Short, so Mark read can send many in one request (a request input stops at 64 KiB). It also names a handled ask. */
 export const messageId = (entry: Entry) => hashId(`${entry.at}|${entry.key}|${entry.message}`)
 
 /** Up to 0.1.1 an id was the text messageId now hashes; a stored one of those becomes the id of today. */

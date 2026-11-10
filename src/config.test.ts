@@ -34,6 +34,13 @@ test('falls back on values of the wrong type or range', () => {
   assert.equal(readConfig({ retentionDays: 2.5 }, HOME).retentionDays, 7)
 })
 
+test('asks and messages are kept until marked only when the settings say true', () => {
+  const on = readConfig({ keepAsksUntilHandled: true, keepMessagesUntilRead: true }, HOME)
+  assert.deepEqual([on.keepAsksUntilHandled, on.keepMessagesUntilRead], [true, true])
+  const odd = readConfig({ keepAsksUntilHandled: 'true', keepMessagesUntilRead: 1 }, HOME)
+  assert.deepEqual([odd.keepAsksUntilHandled, odd.keepMessagesUntilRead], [false, false])
+})
+
 test('config.json holds what the CLI reads, quotes and backslashes included', () => {
   const config = readConfig({ logPath: "C:\\Users\\it's \"here\"\\inbox.jsonl", waitingStatus: 'needs-me', orcaCli: '/opt/orca' }, HOME)
   const read = JSON.parse(renderConfig(config))

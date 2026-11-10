@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { waitingItems } from './board'
-import { openAsks, parseLog } from './log'
+import { heldAsks, openAsks, parseLog } from './log'
 
 const ask = (key: string, worktree: string, terminal: string | null, ts = '2026-11-05T02:00:00Z') =>
   JSON.stringify({ v: 1, ts, kind: 'ask', key, message: `${key} needs a decision`, url: 'https://x/1', worktree, terminal })
@@ -53,6 +53,25 @@ test('a closed terminal falls back to the workspace terminals, and the column is
     waitingItems(worktrees, terminals, open, 'in-progress').map((i) => i.key),
     ['working']
   )
+})
+
+test('a held ask stays listed after its card left the column, and says when the agent resolved it', () => {
+  const resolve = (key: string, worktree: string) => JSON.stringify({ v: 1, ts: '2026-11-05T03:00:00Z', kind: 'resolve', key, message: '', url: null, worktree, terminal: null })
+  const entries = parseLog([ask('P-1', '/w/asked', 'term_asker'), ask('W-1', '/w/working', null), resolve('W-1', '/w/working'), ask('A-1', '/w/archived', null)].join('\n'))
+  const held = heldAsks(entries, { since: 0, handled: {} })
+  const items = waitingItems(worktrees, terminals, openAsks(entries), 'in-review', held)
+  assert.deepEqual(
+    items.map((i) => [i.key, i.reason, i.resumed]),
+    [
+      ['P-1', 'P-1 needs a decision', false],
+      // in-progress again and resolved: still listed, archived workspaces are not
+      ['W-1', 'W-1 needs a decision', true],
+      ['dragged', 'look at the API diff', false],
+      ['bare', null, false]
+    ]
+  )
+  // without a hold the resolved one goes
+  assert.deepEqual(waitingItems(worktrees, terminals, openAsks(entries), 'in-review').map((i) => i.key), ['P-1', 'dragged', 'bare'])
 })
 
 test('on Windows the ask finds its workspace though Git and Orca write the path differently', { skip: process.platform !== 'win32' }, () => {

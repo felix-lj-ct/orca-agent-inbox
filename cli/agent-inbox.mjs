@@ -35,8 +35,23 @@ const USAGE = `  agent-inbox notify <key> <message> [<url>]
       the point no longer sends
   agent-inbox point list
       the recorded points, one JSON object per line
+  agent-inbox hook
+      for an agent's session-start hook (Claude Code: SessionStart): print what the agent needs to know
+      to send here, and that it judges what is worth sending; nothing outside an Orca terminal
   agent-inbox where
       print the settings in use
+`
+
+// What an agent reads at the start of each session, through its session-start hook. It says what the inbox is
+// and how to send, and leaves what to send to the agent.
+const BRIEF = `Agent Inbox is on: Orca shows the person a panel of what waits on them and of the messages sent to it. They may not be watching this terminal. Send to it what matters to them; you judge what does.
+- Before you stop for their decision, approval or help, run
+    ~/.config/agent-inbox/bin/agent-inbox ask <key> "<what you need, one line>"
+  and once they answer and you go on, run
+    ~/.config/agent-inbox/bin/agent-inbox resolve <key>
+- For something they should know and would not see otherwise, run
+    ~/.config/agent-inbox/bin/agent-inbox notify <key> "<what happened; what to do, one line>" [<url>]
+<key> names the work, such as a ticket id or a branch. Orca already shows when you finish a turn. The log is a plain text file: send no secrets.
 `
 
 const WINDOWS = process.platform === 'win32'
@@ -291,6 +306,10 @@ function main(argv) {
       }
       return usage()
     }
+    case 'hook':
+      // The agent passes the session on stdin; the brief needs none of it. Outside an Orca terminal the panel
+      // cannot take the person to the agent, so the agent hears nothing.
+      return process.env.ORCA_TERMINAL_HANDLE ? out(BRIEF) : undefined
     case 'where':
       return out(
         `log      ${LOG}\npoints   ${POINTS}\nwaiting  ${WAITING}\nresolved ${RESUME}\norca     ${findOrca() ?? 'not found'}\nconfig   ${CONFIG}\n`

@@ -13,6 +13,10 @@ export interface InboxConfig {
   waitingStatus: string
   /** Board status id a resolve moves the workspace back to. */
   resumeStatus: string
+  /** An ask stays under Waiting on you until the person marks it handled, whatever the agent and the board do. */
+  keepAsksUntilHandled: boolean
+  /** Opening a message's link leaves it unread. */
+  keepMessagesUntilRead: boolean
   language: Language
   /** Path of the orca CLI, '' to look for it. */
   orcaCli: string
@@ -24,11 +28,13 @@ export const DEFAULTS: InboxConfig = {
   retentionDays: 7,
   waitingStatus: 'in-review',
   resumeStatus: 'in-progress',
+  keepAsksUntilHandled: false,
+  keepMessagesUntilRead: false,
   language: 'auto',
   orcaCli: ''
 }
 
-/** Where the worker installs what agents and scripts use: bin/, lib/agent-inbox.mjs, config.json, agent-guide.md. */
+/** Where the worker installs what agents and scripts use: bin/, lib/agent-inbox.mjs, config.json, agent-guide.md, cli.md. */
 export const configDir = (home: string) => join(home, '.config', 'agent-inbox')
 
 /** ~ and what starts with ~/ (or ~\, as written on Windows) are in the home folder. */
@@ -49,6 +55,8 @@ export function readConfig(raw: Record<string, unknown>, home: string): InboxCon
     retentionDays: Number.isInteger(days) && days >= 1 ? Math.min(days, 365) : DEFAULTS.retentionDays,
     waitingStatus: text(raw.waitingStatus, DEFAULTS.waitingStatus),
     resumeStatus: text(raw.resumeStatus, DEFAULTS.resumeStatus),
+    keepAsksUntilHandled: raw.keepAsksUntilHandled === true,
+    keepMessagesUntilRead: raw.keepMessagesUntilRead === true,
     language,
     orcaCli: expandHome(text(raw.orcaCli, ''), home)
   }

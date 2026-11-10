@@ -52,7 +52,7 @@ function sandbox(status = 'in-review') {
   return { home, workspace, config, orca, calls: orca.calls, cli, cliWith, installed, env }
 }
 
-test('install puts the CLI with its launchers, config.json and the guide where agents find them', () => {
+test('install puts the CLI with its launchers, config.json, the guide and the CLI reference where agents find them', () => {
   const { home, config } = sandbox()
   const dir = join(home, '.config', 'agent-inbox')
   mkdirSync(dir, { recursive: true })
@@ -66,6 +66,7 @@ test('install puts the CLI with its launchers, config.json and the guide where a
   assert.equal(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')).log, join(home, 'state', 'inbox.jsonl'))
   assert.equal(existsSync(join(dir, 'config.env')), false)
   assert.match(readFileSync(setup.guide, 'utf8'), /^---\nname: agent-inbox\n/)
+  assert.match(readFileSync(join(dir, 'cli.md'), 'utf8'), /^# Agent Inbox CLI\n/)
   assert.ok(existsSync(dirname(config.logPath)))
 })
 
@@ -272,6 +273,22 @@ test('resolve leaves a workspace the person already moved on alone', async () =>
   assert.equal((await cli('resolve', 'K-2')).code, 0)
   assert.equal(calls().length, 1)
   assert.equal(readEntries(config.logPath)[0].kind, 'resolve')
+})
+
+test('hook gives an agent in an Orca terminal the brief, and an agent elsewhere nothing', async () => {
+  const { home, config, calls, cli, cliWith } = sandbox()
+  install(config, home, ROOT)
+  const brief = await cli('hook')
+  assert.equal(brief.code, 0)
+  assert.match(brief.stdout, /^Agent Inbox is on: /)
+  assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox ask <key> /)
+  assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox resolve <key>/)
+  assert.match(brief.stdout, /~\/\.config\/agent-inbox\/bin\/agent-inbox notify <key> /)
+  assert.match(brief.stdout, /you judge what does/)
+  assert.deepEqual(await cliWith({ ORCA_TERMINAL_HANDLE: '' }, 'hook'), { code: 0, stdout: '', stderr: '' })
+  // it only prints: nothing is sent, nothing asks Orca
+  assert.equal(readEntries(config.logPath).length, 0)
+  assert.deepEqual(calls(), [])
 })
 
 test('usage errors exit 2 and a missing orca CLI exits 3 without logging the ask', async () => {

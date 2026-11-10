@@ -1,12 +1,13 @@
 // Agent Inbox's worker. On start and on every settings change it installs the CLI, config.json and the
-// agent guide into ~/.config/agent-inbox and prunes the log to the retention window, then prunes again
+// guides of guide/ into ~/.config/agent-inbox and prunes the log to the retention window, then prunes again
 // every hour. It answers the panel from the log and the Orca board, which it reads through the orca CLI
-// (the host API has no board), lists the points recorded beside the log, starts the agent that adds, removes
+// (the host API has no board), keeps asks until the person marks them handled when the settings say so, lists
+// the points recorded beside the log, starts the agent that adds, removes
 // or aligns them, stars the repository through gh when the person asks, and tells open panels when the log or the
 // points change. On Windows it also links ~/.config/agent-inbox in the WSL distros of the board's workspaces
 // (src/wsl.ts). Orca starts it for a panel request and stops it when idle.
 import type { OrcaWorkerApi } from 'orca/worker'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, type FSWatcher, watch } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, delimiter, dirname, join } from 'node:path'
@@ -14,7 +15,7 @@ import { fileURLToPath } from 'node:url'
 import { waitingItems } from './board'
 import { configDir, type InboxConfig, readConfig } from './config'
 import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir, sqliteValue } from './launch'
-import { currentId, messageId, openAsks, recentMessages } from './log'
+import { currentId, heldAsks, type Hold, messageId, openAsks, pathKey, recentMessages } from './log'
 import { pointsPath } from './points'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup } from './protocol'
 import { cliPath, install, prune, readEntries, readPoints } from './store'
@@ -38,23 +39,10 @@ const READ = 'read'
 const DISMISSED = 'dismissed'
 /** false while the setup task waits, true once handled; unset until the first start decides. */
 const SETUP_DONE = 'setupDone'
+/** With asks kept until handled: when the setting went on, and the asks marked handled (see Hold). */
+const HOLD_SINCE = 'holdSince'
+const HANDLED = 'handled'
 const WINDOWS = process.platform === 'win32'
-/** Windows PowerShell 5.1, in every Windows since 10. */
-const POWERSHELL = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-/** Node has no clipboard: the first of these that runs wins. PowerShell reads the text as UTF-8, whatever the code page. */
-const CLIPBOARD: Record<string, string[][]> = {
-  darwin: [['pbcopy']],
-  linux: [['wl-copy'], ['xclip', '-selection', 'clipboard'], ['xsel', '--clipboard', '--input']],
-  win32: [
-    [
-      POWERSHELL,
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      '$in = New-Object IO.MemoryStream; [Console]::OpenStandardInput().CopyTo($in); Set-Clipboard -Value ([Text.Encoding]::UTF8.GetString($in.ToArray()))'
-    ]
-  ]
-}
 const ORCA_APP_CLI = '/Applications/Orca.app/Contents/Resources/bin/orca'
 /** orca CLI JSON, read field by field */
 type Raw = any
@@ -106,29 +94,6 @@ function run(file: string, args: string[], env: Record<string, string> = {}, tim
       else resolve(String(stdout))
     })
   })
-}
-
-/** Feeds input to a command. Waits for its exit, not its pipes: wl-copy and xclip leave a child holding them. */
-function pipeTo(file: string, args: string[], input: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env: childEnv(), stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true })
-    child.on('error', reject)
-    child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${file} exited with ${code}`))))
-    child.stdin.on('error', reject)
-    child.stdin.end(input)
-  })
-}
-
-async function copyText(text: string): Promise<ActionResult> {
-  for (const [file, ...args] of CLIPBOARD[process.platform] ?? []) {
-    try {
-      await pipeTo(file, args, text)
-      return { ok: true }
-    } catch {
-      // not installed, or no display to own the clipboard: try the next
-    }
-  }
-  return { ok: false, error: 'no-clipboard' }
 }
 
 // Node runs only executables directly: on Windows, orca.exe rather than the orca.cmd beside it.
@@ -204,9 +169,20 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   }
 
-  function pruneNow(): void {
+  /** The asks kept until handled; null while the setting is off. */
+  async function hold(): Promise<Hold | null> {
+    if (!config.keepAsksUntilHandled) return null
+    const since = await orca.storage.get(HOLD_SINCE)
+    const handled = await orca.storage.get(HANDLED)
+    return {
+      since: typeof since === 'number' ? since : Date.now(),
+      handled: typeof handled === 'object' && handled !== null && !Array.isArray(handled) ? (handled as Record<string, string>) : {}
+    }
+  }
+
+  async function pruneNow(): Promise<void> {
     try {
-      const removed = prune(config)
+      const removed = prune(config, Date.now(), (await hold()) ?? undefined)
       if (removed > 0) orca.log(`pruned ${removed} log lines older than ${config.retentionDays} days`)
     } catch (e) {
       orca.log(`prune ${config.logPath}: ${errorText(e)}`)
@@ -255,7 +231,15 @@ export default function activate(orca: OrcaWorkerApi): void {
     if (typeof (await orca.storage.get(SETUP_DONE)) !== 'boolean') {
       await orca.storage.set(SETUP_DONE, readEntries(config.logPath).length > 0)
     }
-    pruneNow()
+    // asks handled before the setting went on stay handled; off, nothing is kept for the next time it goes on
+    if (!config.keepAsksUntilHandled) {
+      await orca.storage.delete(HOLD_SINCE)
+      await orca.storage.delete(HANDLED)
+    } else if (typeof (await orca.storage.get(HOLD_SINCE)) !== 'number') {
+      // to the second, as the log has it: a resolve in the same second counts as after
+      await orca.storage.set(HOLD_SINCE, Math.floor(Date.now() / 1000) * 1000)
+    }
+    await pruneNow()
     watchLog()
   }
 
@@ -284,6 +268,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       readCount: history.length,
       points: readPoints(config.logPath),
       retentionDays: config.retentionDays,
+      keepMessagesUntilRead: config.keepMessagesUntilRead,
       language: config.language,
       setup,
       setupPending: await setupPending()
@@ -293,7 +278,9 @@ export default function activate(orca: OrcaWorkerApi): void {
         orcaJson(config, 'worktree', 'ps', '--limit', '1000'),
         orcaJson(config, 'terminal', 'list', '--limit', '1000')
       ])
-      const waiting = waitingItems(ps.worktrees ?? [], terms.terminals ?? [], openAsks(entries), config.waitingStatus)
+      const kept = await hold()
+      const held = kept === null ? undefined : heldAsks(entries, kept)
+      const waiting = waitingItems(ps.worktrees ?? [], terms.terminals ?? [], openAsks(entries), config.waitingStatus, held)
       if (WINDOWS) void linkWsl(ps.worktrees ?? [])
       return { ...base, waiting, error: setupError }
     } catch (e) {
@@ -324,12 +311,29 @@ export default function activate(orca: OrcaWorkerApi): void {
         AGENT_INBOX_RESUME: config.resumeStatus,
         AGENT_INBOX_ORCA: orcaCli(config)
       })
+      await markHandled(input.path)
       return { ok: true }
     } catch (e) {
       return { ok: false, error: errorText(e) }
     } finally {
       panelsChanged()
     }
+  }
+
+  /**
+   * With asks kept until handled: the last ask of the workspace is handled. Only workspaces with an ask still in
+   * the log stay recorded, so the record does not grow forever.
+   */
+  async function markHandled(path: string): Promise<void> {
+    const kept = await hold()
+    if (kept === null) return
+    const last = new Map<string, string>()
+    for (const e of readEntries(config.logPath)) if (e.kind === 'ask' && e.worktree) last.set(pathKey(e.worktree), messageId(e))
+    const handled: Record<string, string> = {}
+    for (const [p, id] of Object.entries(kept.handled)) if (last.has(p)) handled[p] = id
+    const id = last.get(pathKey(path))
+    if (id !== undefined) handled[pathKey(path)] = id
+    await orca.storage.set(HANDLED, handled)
   }
 
   /** Adds ids to the read ones; only ids still inside the retention window stay, so the list does not grow forever. */
@@ -357,7 +361,6 @@ export default function activate(orca: OrcaWorkerApi): void {
     await orca.storage.set(SETUP_DONE, true)
     return { ok: true }
   })
-  orca.panels.handle('inbox.copy', ({ text }) => copyText(String(text)))
 
   orca.panels.handle('inbox.launch', async ({ prompt }) => {
     await ready
@@ -389,7 +392,7 @@ export default function activate(orca: OrcaWorkerApi): void {
     void load().then(panelsChanged)
   })
   // Orca's channel keeps the worker process alive; the timer and the watcher must not on their own
-  const pruneTimer = setInterval(pruneNow, PRUNE_MS)
+  const pruneTimer = setInterval(() => void pruneNow(), PRUNE_MS)
   pruneTimer.unref()
 
   teardown = () => {

@@ -1,6 +1,6 @@
 ---
 name: agent-inbox
-description: Use when the person asks where their workflow should ask them or tell them something through Agent Inbox, asks to set up, review or extend Agent Inbox for their workflow, asks to add or remove one Agent Inbox point, or asks to align the recorded points with the workflow. Explains how to learn the workflow (instruction files, scripts, Orca automations), find the points that should send, and propose how to wire each one. For a whole workflow it produces a proposal and changes no files; for one point it makes the change once the person agrees; to align, it changes only the records, once the person agrees.
+description: Use when the person asks where their workflow should ask them or tell them something through Agent Inbox, asks to set up, review or extend Agent Inbox for their workflow, asks to add or remove one Agent Inbox point, or asks to align the recorded points with the workflow. Explains how to tell the person's agents about the inbox through a session-start hook so that they judge what to send, how to find the points of scripts and Orca automations that should send, and how to wire each one, in a hook or a script before an instruction file or a prompt. For a whole workflow it produces a proposal and changes no files; for one point it makes the change once the person agrees; to align, it changes only the records, once the person agrees.
 ---
 
 # Agent Inbox: find where a workflow should send
@@ -8,53 +8,64 @@ description: Use when the person asks where their workflow should ask them or te
 Agent Inbox is an Orca plugin. Its sidebar panel shows the person three lists:
 
 - **Waiting on you**: workspaces that an agent moved to the board's waiting column with `agent-inbox ask`,
-  each with the reason and a button that goes to the terminal of the agent that asked.
-- **Messages**: lines sent with `agent-inbox notify`, kept for the retention window (default 7 days).
+  each with the reason, a button that goes to the terminal of the agent that asked, and a link when the agent
+  gave one.
+- **Messages**: lines sent with `agent-inbox notify`, each with a link when the sender gave one, kept for the
+  retention window (default 7 days).
 - **Wired points**: the points of the workflow that send, recorded with `agent-inbox point add`, so the
   person can see what may write to the inbox and where it is wired.
 
 What the person asked decides your job:
 
-- **Go through a workflow** (all of it, or one workflow by name): learn it, find the points where it should
-  ask them or tell them something, and give them a proposal that says which points to wire and how
-  (sections 1 to 4). **Change no files.** The person reads the proposal, cuts rows, and applies it later or
-  asks for it in a separate request.
+- **Go through a workflow** (all of it, or one workflow by name): learn it, see how its agents get to know
+  the inbox, find the points where its scripts and automations should ask the person or tell them
+  something, and give them a proposal that says what to wire and how (sections 1 to 5). **Change no
+  files.** The person reads the proposal, cuts rows, and applies it later or asks for it in a separate
+  request.
 - **Add one point, or remove the point `<id>`**: the panel's **Add a point** and **Remove** buttons start you
   with this request. Make that one change in the workflow and in the records, once the person agrees to it
-  (section 5).
+  (section 6).
 - **Align the points**: the panel's **Align** button starts you with this request. Compare the records with
-  the calls in the workflow and fix the records, once the person agrees (section 6). **Change no workflow
+  the calls in the workflow and fix the records, once the person agrees (section 7). **Change no workflow
   files.**
 
-Check the plugin first:
+## The CLI
+
+First read `~/.config/agent-inbox/cli.md`, the reference of the CLI: each command with its arguments, what the
+person sees, where it runs, what a message and its link can hold, the exit codes, and how to call it in
+PowerShell, cmd and WSL. This guide writes `agent-inbox` for `~/.config/agent-inbox/bin/agent-inbox`.
+
+If the file is not there, the plugin is not installed or has not started yet; in WSL, the link to the Windows
+folder can also be missing. Tell the person and stop. Then check that the CLI runs, the way `cli.md` gives for
+your shell:
 
 ```sh
 ~/.config/agent-inbox/bin/agent-inbox where
 ```
 
-If this fails, the plugin is not installed or has not started yet. Tell the person and stop. On Windows this
-command runs as written in PowerShell, Git Bash and WSL; in cmd, run
-`"%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" where`. In WSL, `~/.config/agent-inbox` is a link that
-the plugin makes to the Windows folder while the distro runs and the Agent Inbox panel is open: if it is missing,
-tell the person to open the panel, or to make the link as the plugin's README says, and stop.
+If this fails, tell the person what it printed and stop.
 
-## What the CLI does
+## Agents judge; scripts are wired
 
-| Command | The person sees | Runs from |
-| --- | --- | --- |
-| `agent-inbox ask <key> "<message>" [<url>]` | A card under Waiting on you; the workspace moves to the waiting column with an unread dot | Inside an Orca workspace, or with `--worktree <path>` right after `ask` |
-| `agent-inbox resolve <key>` | The card goes; the workspace moves back to the resolved column, if it is still waiting | The same workspace |
-| `agent-inbox notify <key> "<message>" [<url>]` | A line under Messages | Anywhere |
-| `agent-inbox point add <id> <ask\|notify> <key> "<when>" "<wired in>"` | A row under Wired points; the same id again replaces it | Anywhere |
-| `agent-inbox point remove <id>` / `agent-inbox point list` | The row goes / the recorded points, one JSON object per line | Anywhere |
+An agent that knows the inbox is there can judge for itself what the person needs to decide or know. A
+capable model judges this better than rules written for it in advance, and such rules can make it work
+worse. So:
 
-The key names the work (ticket id, job name, automation name). A workspace has one waiting state: a later
-`ask` replaces the reason, one `resolve` clears it. Run `agent-inbox` with no arguments for its usage.
+- **Agent sessions**: tell each agent about the inbox once, through a hook that runs when a session starts
+  (section 2), and leave the rest to it. Do not list points for agent sessions, and do not write rules for
+  when an agent should `ask` or `notify`.
+- **Scripts, automation prechecks, scheduled jobs and CI**: no agent judges there. Find their points
+  (section 3) and wire each one with a call (section 4).
+- **A hook or a script first.** Propose lines in an instruction file (`CLAUDE.md`, `AGENTS.md`, rules) or in an
+  automation prompt only when no hook or script can carry them, or when the person asks for them.
 
 ## 1. Learn the workflow
 
 Read what exists before you ask:
 
+- **The agents and their settings**: which agents the person runs in Orca (Orca's default agent, the agents
+  of the automations), and their hooks: for Claude Code the `hooks` of `~/.claude/settings.json` and of the
+  projects' `.claude/settings.json`; for another agent, its own hook settings.
 - **Agent instruction files**: `CLAUDE.md`, `AGENTS.md`, rules folders, and the skills the workflow uses.
 - **Scripts**: the scripts the workflow runs, Makefiles, READMEs.
 - **Orca automations**: `orca automations list --json`. For each one note its name, schedule (`rrule`),
@@ -63,65 +74,90 @@ Read what exists before you ask:
   <id>` shows how often it runs, skips and fails.
 - **Other schedules and CI**: `crontab -l`, launchd agents, on Windows the Task Scheduler
   (`Get-ScheduledTask` in PowerShell, or `schtasks /query /fo list /v`), CI pipelines and their schedules.
-- **What already notifies**: notify wrappers, desktop notifications (`osascript`, `terminal-notifier`,
-  `notify-send`, PowerShell toasts such as BurntToast), mail, chat webhooks, Jira or PR comments the person reads.
+- **What already notifies**: notify wrappers, hooks that send, desktop notifications (`osascript`,
+  `terminal-notifier`, `notify-send`, PowerShell toasts such as BurntToast), mail, chat webhooks, Jira or PR
+  comments the person reads.
 
 If the person names one workflow, read and propose for that one only.
 
 Find what is already wired: run `agent-inbox point list` for the recorded points, search those same places
-for `agent-inbox`, and read the keys in the log (`agent-inbox where` prints its path). Do not propose a point
-again that already sends, or snippet A where it is already in place. Use the same key names and the same
-notify wrapper as the points already wired. Compare the records with what you found: a recorded point whose
-call is gone needs a `point remove`, and a call without a record needs a `point add` (snippet D).
+for `agent-inbox` (an agent hook that runs `agent-inbox hook` included), and read the keys in the log
+(`agent-inbox where` prints its path). Do not propose a point again that already sends, or the hook where it
+is already in place. Use the same key names and the same notify wrapper as the points already wired. Compare
+the records with what you found: a recorded point whose call is gone needs a `point remove`, and a call
+without a record needs a `point add` (snippet D).
 
 Then ask the person only for the gaps: the stages from start to done, who or what runs each one (the person,
 an agent, a script, an Orca automation), and where they wait or get surprised today.
 
-## 2. Find the trigger points
+## 2. Tell the agents
 
-Walk every stage and look for these kinds of points:
+`agent-inbox hook` prints the brief: what the panel is, the `ask`, `resolve` and `notify` commands, and that
+the agent judges what is worth sending. Run it in an Orca terminal to read it. Outside an Orca terminal it
+prints nothing.
+
+For each agent the person uses:
+
+| The agent | Give it the brief like this |
+| --- | --- |
+| Claude Code | A `SessionStart` hook in `~/.claude/settings.json` that runs `agent-inbox hook` (snippet A). Every session then reads the brief when it starts, and again after `/clear` and compaction, in every workspace and in Orca automation runs |
+| Another agent that has a hook which runs a command when a session starts and gives its output to the agent | The same command in that hook |
+| An agent without such a hook | The brief, as `agent-inbox hook` prints it, in the agent's global instruction file (snippet C) |
+
+Then:
+
+- **Leave the judgment to the agent.** Propose no rules for when it should `ask` or `notify`. If the person
+  wants one case sent every time, wire that case as section 4 says, in a hook on that event first.
+- **An instruction file that already tells agents to send** (a section such as "Stopping for me") overlaps
+  the brief. Propose to take out what the brief already says, once the hook is in place; keep what the
+  section adds, such as the person's own cases.
+- **Record the hook as two points** (snippet D): an `ask` and a `notify`, both wired in the hook.
+
+## 3. Find the trigger points of scripts and automations
+
+Walk every stage that runs without an agent's judgment: scripts, automation prechecks, scheduled jobs, CI,
+and scripts that drive an agent in a loop. Look for these kinds of points:
 
 | Kind | Examples | Send |
 | --- | --- | --- |
-| Decision gate | a design choice the agent should not make alone, an unclear requirement, conflicting instructions | `ask` |
-| Approval before an irreversible or outward action | deploy to production, delete data, publish, post a comment or mail, force-push, spend money | `ask` |
-| A resource only the person has | an expired login or session cookie, 2FA, a missing credential or permission, a device | `ask` from an agent; `notify` with the fix from a script |
-| Retries used up | an automatic fix loop used its rounds, a flaky job failed again | `ask` |
-| A conflict the agent cannot judge | a merge conflict across someone else's change, contradicting review comments | `ask` |
+| A resource only the person has | an expired login or session cookie, 2FA, a missing credential or permission, a device | `notify`, with the fix |
+| Retries used up | an automatic fix loop used its rounds, a flaky job failed again | `ask` for the workspace that waits; else `notify` |
 | A long job ended | a build, test suite, migration or batch run finished or failed | `notify` |
 | A handoff happened | a pull request opened, a report posted, a ticket moved to the next team | `notify`, with the link |
 | A scheduled job did something | a cleanup deleted records, a nightly check found a problem | `notify`, only when it did something or failed |
 | A precondition is missing | an input file, a config value or an environment is not there | `notify`, once per occurrence |
 
 To choose between them: if the work stops until the person acts, it is an `ask`. An `ask` needs an Orca
-workspace and an agent that waits for the answer, so a script sends a `notify` that says what to do.
+workspace that waits for the person, which a script names with `--worktree <path>`; with no such workspace, a
+script sends a `notify` that says what to do.
 
 Keep a point only if all of these are true:
 
-- **The person acts on it or wants to know it.** Progress updates, a turn that ended normally (Orca already
-  shows agent states) and routine successes are not points.
+- **The person acts on it or wants to know it.** Progress updates and routine successes are not points.
 - **One channel.** If the person already gets it through a channel they read, propose to point that channel
   at `agent-inbox` or leave the point out. Never add a second message for the same event.
 - **One line.** It fits in about 120 characters: what is needed, or what happened and what the person should
-  do. Add the URL when there is a page to open. No secrets: the log is a plain text file.
+  do. Add the URL when there is a page to open (`cli.md` says which links open). No secrets: the log is a plain
+  text file.
 - **Once.** A lasting condition (an expired credential, a missing input) is sent once, not on every run.
 
 Fewer points are better: every message should be one the person acts on or wants to know.
 
-## 3. Choose how each point is wired
+## 4. Choose how each point is wired
 
 Wire each point in the one place that owns it, and only in places that exist today. If a point has no place
 to send from (the person checks it by hand), list it under "Not wired" with the reason.
 
 | The point is in | Wire it like this |
 | --- | --- |
-| An interactive agent session | The "Stopping for me" section in the instruction file the workflow already uses (snippet A) |
 | A script | One CLI call at the point; a failed message must not fail the job (snippet B) |
 | An Orca automation's precheck | A `notify` call in the precheck script (snippet B); see below |
-| An Orca automation's prompt | Lines in the prompt that say when to `ask` and when to `notify` (snippet C); see below |
+| An Orca automation's prompt | Nothing, when the agent of the run gets the brief (section 2): it judges. A result that must reach the person every time: a call in a script the run already runs (snippet B). Lines in the prompt (snippet C) only when neither is possible, or the person asks for them |
+| An agent event that the person wants sent every time (a question tool, a given command) | A hook on that event that runs a small script, which reads the hook's input and calls the CLI; for Claude Code a `PreToolUse` or `PostToolUse` hook with a `matcher`. A line in the instruction file (snippet C) only when the agent has no such hook |
 | A notify wrapper or channel the workflow already has | Point the wrapper at `agent-inbox`, so every caller moves at once |
 
-Prefer an explicit call at the point over a hook that fires on every agent event; those flood the inbox.
+A hook that sends on every turn or every tool call (Claude Code's `Stop`, a `PostToolUse` hook without a
+`matcher`) floods the inbox. Hook one event, or leave it to the agent's judgment.
 
 ### Orca automations
 
@@ -138,11 +174,12 @@ So:
   itself (a cleanup, a refresh) and it did something or failed, or where it finds a condition the person must
   fix. A precheck that only decides whether there is work to do sends nothing. The call must not change the
   exit code, because the exit code decides whether the agent starts.
-- The agent in the prompt can `ask`: Go to agent then lands on that run's session. Propose an `ask` where the
-  prompt makes the agent stop for the person, and a `notify` where the result needs the person (a failure, a
-  report link, a filed bug). A run that passed or found nothing sends nothing; the run history has it.
+- The agent in the prompt is an agent session: when it gets the brief, it judges like any other. It can
+  `ask`, and Go to agent then lands on that run's session.
 - Look for prompt lines like "only report X" or "do not fix, report": that report goes only to the run's
-  terminal, which the person may never open. These are often the best points.
+  terminal, which the person may never open. Say so in the proposal, and that the agent judges whether to
+  send it. If the person wants it sent every time, send it from a script the run already runs (snippet B);
+  add lines to the prompt (snippet C) only when there is no such script, or the person asks for them.
 - Disabled automations are part of the workflow, but propose only how to wire them. Do not propose to enable
   them or change their schedules.
 
@@ -150,19 +187,26 @@ So:
 
 Adapt these in the proposal: fill in the key, the message and the conditions.
 
-**A. Instruction file** (agent behavior lives here, not in this guide):
+**A. Claude Code hook**: in `~/.claude/settings.json`. Add the entry to the `SessionStart` hooks that are
+already there and keep every other hook: Orca adds its own hooks to this file. With no `matcher`, it runs when
+a session starts, resumes, and after `/clear` and compaction.
 
-```markdown
-## Stopping for me
-When you cannot go on without my decision, approval or help:
-1. Run `~/.config/agent-inbox/bin/agent-inbox ask <KEY> "<what you need, one line>"` in the workspace.
-2. Start your reply with `[needs you] <KEY>`, ask the question, and stop.
-3. When I answer and you go on, run `~/.config/agent-inbox/bin/agent-inbox resolve <KEY>`.
-Finishing normally is not a stop: send nothing. If the command fails, put its error in your reply; do not retry.
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "~/.config/agent-inbox/bin/agent-inbox hook" }] }
+    ]
+  }
+}
 ```
 
-**B. Script or precheck**: one call, its result ignored. In another language, run the same command and
-ignore its exit code.
+On Windows, Claude Code runs hook commands in Git Bash, or in PowerShell when Git Bash is missing; this command
+runs as written in both.
+
+**B. Script or precheck**: one call, its result ignored. For PowerShell, a `.bat` or `.cmd` script or another
+language, and for arguments with `&`, `|`, `<`, `>`, `^` or a line break, call it as `cli.md` says under "In a
+script".
 
 ```sh
 ~/.config/agent-inbox/bin/agent-inbox notify nightly-build "build failed: 3 tests red" "$BUILD_URL" || true
@@ -171,84 +215,85 @@ ignore its exit code.
 For a lasting condition, keep a marker file while it holds, and send again only after it cleared and came
 back.
 
-On Windows, the command above runs as written in Git Bash and WSL. In PowerShell, `|| true` does not work: call
-`~/.config/agent-inbox/bin/agent-inbox` inside `try { ... } catch {}`. In a `.bat` or `.cmd` script, use
-`call "%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" ... || ver >nul`: without `call` the script stops
-after it. PowerShell and cmd pass the arguments through cmd, which splits an argument without spaces at `&`, `|`,
-`<`, `>` or `^`, and cuts one at a line break: in PowerShell, quote such an argument twice, as in
-`'"https://ci.example.com/run?id=1&tab=log"'`.
-
-**C. Automation prompt**:
+**C. Instruction file or automation prompt**: only where sections 2 and 4 send you here. For an agent without
+a session-start hook, put the brief under a heading such as `## Agent Inbox` in its global instruction file,
+as `agent-inbox hook` prints it in an Orca terminal. For a case the person wants sent every time, add one line
+that names the case:
 
 ```text
-If you must stop for my decision or help, run `~/.config/agent-inbox/bin/agent-inbox ask <NAME> "<one line>"`
-before you stop. If the result needs me (<conditions>), run
-`~/.config/agent-inbox/bin/agent-inbox notify <NAME> "<what happened; what to do>" "<link>"` once at the end.
-Send nothing when <the run passed or found nothing>.
+When <the case>, run `~/.config/agent-inbox/bin/agent-inbox notify <KEY> "<what happened; what to do>" "<link>"` once.
 ```
 
 **D. Record the point**: one per row, run once the row is wired, so the person sees it under Wired points.
 `<id>` is letters, digits, `.`, `_` or `-`; give the key as a placeholder such as `<ticket>` when it varies.
 
 ```sh
+~/.config/agent-inbox/bin/agent-inbox point add agent-ask ask "<work>" "an agent stops for your decision, approval or help, as it judges" "~/.claude/settings.json SessionStart hook (A)"
+~/.config/agent-inbox/bin/agent-inbox point add agent-notify notify "<work>" "an agent judges that you should know something" "~/.claude/settings.json SessionStart hook (A)"
 ~/.config/agent-inbox/bin/agent-inbox point add cleanup-failed notify cleanup "the nightly cleanup failed" "automation Cleanup, precheck cleanup.sh (B)"
 ```
 
-## 4. Write the proposal
+## 5. Write the proposal
 
 Give the person, in this order:
 
-1. **The workflow** in a few lines: the stages, and who or what runs each one.
-2. **The trigger table**, one row per point:
+1. **The workflow** in a few lines: the stages, who or what runs each one, and the agents it uses.
+2. **The agents**: for each agent, whether it gets the brief today, and the change that gives it the brief
+   (snippet A, the agent's own hook, or snippet C), with its two `point add` commands (D). Name the
+   instruction-file lines that the brief makes unnecessary.
+3. **The trigger table** of scripts and automations, one row per point:
 
    | # | Point | Command | Key | Message | Wired in | Repeats |
    | --- | --- | --- | --- | --- | --- | --- |
-   | 1 | Design decision during implementation | `ask` | ticket id | `<question in one line>` | `CLAUDE.md` (A) | once per question |
+   | 1 | Fix loop used its rounds | `ask` | ticket id | `<n> bugs left after 3 rounds` | `fix.sh` (B), `--worktree` of the ticket | once per ticket |
    | 2 | Nightly cleanup failed | `notify` | `cleanup` | `cleanup failed: <reason>; run <command> to retry` | automation "Cleanup", precheck `cleanup.sh` (B) | once until it works again |
 
-   "Wired in" names the file, script or automation (precheck or prompt) and the snippet.
-3. **The change for each row**: the exact text to add and where (the file and the line or section, or the
-   automation and which part), then its `point add` command (D). For an automation prompt, show the lines
-   to add, not the whole prompt. Add the `point add` and `point remove` commands that bring the records in
-   line with what already sends.
-4. **Not wired**: the points you left out, each with the reason (another channel already covers it, it
-   would be noise, there is no place to send from).
-5. **How to check once it is wired**: inside a workspace, `agent-inbox test` puts a TEST card under Waiting on
-   you and `agent-inbox resolve TEST` removes it; `agent-inbox notify DRILL "drill message"` puts a line under
-   Messages; each recorded point shows under Wired points. Then trigger one real point if that is cheap and
-   safe.
+   "Wired in" names the file, script, hook or automation (precheck or prompt) and the snippet.
+4. **The change for each row**: the exact text to add and where (the file and the line or section, or the
+   automation and which part), then its `point add` command (D). Add the `point add` and `point remove`
+   commands that bring the records in line with what already sends.
+5. **Not wired**: the points you left out, each with the reason (an agent with the brief judges it, another
+   channel already covers it, it would be noise, there is no place to send from).
+6. **How to check once it is wired**: in an Orca terminal, `agent-inbox hook` prints the brief, and an agent
+   session started after the change has read it (ask the agent what it knows about Agent Inbox). Inside a
+   workspace, `agent-inbox test` puts a TEST card under Waiting on you and `agent-inbox resolve TEST` removes
+   it; `agent-inbox notify DRILL "drill message"` puts a line under Messages; each recorded point shows under
+   Wired points. Then trigger one real point if that is cheap and safe.
 
 Stop after the proposal.
 
-## 5. Add or remove one point
+## 6. Add or remove one point
 
 Change only what this one point needs. Before you change anything, show the person the row (as in the
-trigger table of section 4) and the exact change, and wait for their OK. Edit the file where the workflow
+trigger table of section 5) and the exact change, and wait for their OK. Edit the file where the workflow
 reads it, by its absolute path: the workspace you run in may hold only a copy of it, or be unrelated.
 
 **Add a point:**
 
 1. Run `agent-inbox point list` and read what already sends (section 1, "Find what is already wired").
 2. If the person has not said what should send, ask them in one question. Offer up to three candidates
-   that fit their workflow, from the kinds in section 2.
-3. Check the point against the rules in section 2 ("Keep a point only if"). If it fails one, or the point
-   already sends, say so and stop.
-4. Choose the place and the snippet (section 3). Show the row and the change; wait for the OK.
+   that fit their workflow: the brief for an agent that does not get it yet (section 2), or points of their
+   scripts and automations (section 3).
+3. Check the point against the rules in section 3 ("Keep a point only if"). If it fails one, or the point
+   already sends, say so and stop. If an agent with the brief would send it by its own judgment, say so: it
+   needs no wiring, unless the person wants it sent every time (section 4).
+4. Choose the place and the snippet (sections 2 and 4). Show the row and the change; wait for the OK.
 5. Make the change, then record the point with `agent-inbox point add` (snippet D).
-6. Check it: send a drill for a `notify` point (`agent-inbox notify DRILL "drill message"`), or tell the
-   person how to trigger the point. Show the new row from `agent-inbox point list`.
+6. Check it: for the hook, run `agent-inbox hook` in an Orca terminal and show its first line; for a `notify`
+   point, send a drill (`agent-inbox notify DRILL "drill message"`); else tell the person how to trigger the
+   point. Show the new row from `agent-inbox point list`.
 
 **Remove the point `<id>`:**
 
 1. Read the point from `agent-inbox point list`.
 2. Find its call. Look first in the place the point names ("wired in"), then in the places from section 1:
    search for `agent-inbox` calls with its key.
-3. Show the lines you will take out; wait for the OK. Keep what other points still use, such as the
-   "Stopping for me" section (snippet A) while another `ask` point needs it.
+3. Show the lines you will take out; wait for the OK. Keep what other points still use: the hook of section 2
+   carries an `ask` and a `notify` point, and stays while either of them is recorded.
 4. Take the lines out, then run `agent-inbox point remove <id>`.
 5. If you find no call, say so. With the person's OK, remove the record only.
 
-## 6. Align the points
+## 7. Align the points
 
 The records drift when a workflow changes by hand: a script is deleted, a prompt is rewritten, a call is added
 without `point add`. Bring the records in line with the calls. The calls are the truth; change only the
@@ -257,8 +302,9 @@ records.
 1. Read the records: `agent-inbox point list`.
 2. Find the calls: search for `agent-inbox` in the places from section 1 and in the place each record names
    ("wired in"). For each call note the command (`ask` or `notify`), the key and the place. A call through a
-   notify wrapper counts at the wrapper. A key that is a variable (`"$TICKET"`) matches a record whose key is a
-   placeholder such as `<ticket>`.
+   notify wrapper counts at the wrapper. A hook that runs `agent-inbox hook` counts as an `ask` call and a
+   `notify` call. A key that is a variable (`"$TICKET"`) matches a record whose key is a placeholder such as
+   `<ticket>`.
 3. Read the keys sent within the retention window from the log (`agent-inbox where` prints its path). A key
    that still sends shows a live call, also where you did not find one.
 4. Put each record and each call in one row of this table:
@@ -271,10 +317,10 @@ records.
    | A record without a call, and its key has not sent within the window | `point remove <id>` |
    | A record without a call, but its key still sends | Nothing; say that the call is in a place you did not search |
 
-5. List the problems you see in the calls themselves, against the rules in sections 2 and 3: a script call
+5. List the problems you see in the calls themselves, against the rules in sections 3 and 4: a script call
    whose failure fails the job (no `|| true` or its equivalent), a message longer than one line, a second
-   channel for the same event, a secret in a message, two calls for one event. Do not fix them; the person can
-   fix them, or use **Add a point** and **Remove**.
+   channel for the same event, a secret in a message, two calls for one event, a hook that sends on every
+   turn. Do not fix them; the person can fix them, or use **Add a point** and **Remove**.
 6. Show the table, the commands and the problems, and wait for the person's OK. If every record matches its
    call, say so and stop.
 7. Run the commands the person agreed to, then show `agent-inbox point list`.

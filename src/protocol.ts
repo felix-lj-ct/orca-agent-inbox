@@ -20,6 +20,8 @@ export interface WaitingItem {
   url: string | null
   /** Terminal handle of the agent that asked, else of any terminal in the workspace. */
   terminal: string | null
+  /** Kept until marked handled though the agent resolved it: it got its answer and went on. */
+  resumed: boolean
 }
 
 /** An `agent-inbox notify` line: something happened, nothing waits. */
@@ -44,7 +46,7 @@ export interface WiredPoint {
   wiredIn: string
 }
 
-/** Where agents and people find the CLI and the guide, for the panel's setup task. */
+/** Where agents and people find the CLI and the guide; Wired points' prompts name the guide. */
 export interface Setup {
   cli: string
   guide: string
@@ -52,6 +54,7 @@ export interface Setup {
 }
 
 export interface Inbox {
+  /** The waiting column; with asks kept until handled, also every ask the person has not marked handled. */
   waiting: WaitingItem[]
   /** The newest unread messages, then the newest read ones, as many of each as inbox.list asked for. */
   messages: InboxMessage[]
@@ -60,6 +63,8 @@ export interface Inbox {
   readCount: number
   points: WiredPoint[]
   retentionDays: number
+  /** Opening a message's link leaves it unread. */
+  keepMessagesUntilRead: boolean
   language: Language
   setup: Setup
   /** First start without a log: the setup task waits on the person until they mark it handled. */
@@ -82,7 +87,7 @@ declare module 'orca' {
     'inbox.list': { input: { unread: number; read: number }; output: Inbox }
     /** Switches Orca to the terminal of the agent that asked. */
     'inbox.open': { input: { path: string; terminal: string | null }; output: ActionResult }
-    /** `agent-inbox resolve`: back to the resolved column, comment cleared. */
+    /** `agent-inbox resolve`: back to the resolved column, comment cleared; a kept ask is handled. */
     'inbox.resolve': { input: { path: string; key: string }; output: ActionResult }
     /** Marks messages read; they move to the read history until the retention window drops them. */
     'inbox.read': { input: { ids: string[] }; output: ActionResult }
@@ -90,8 +95,6 @@ declare module 'orca' {
     'inbox.readAll': { input: { through: number }; output: ActionResult }
     /** The setup task is handled; it does not come back. */
     'inbox.setupDone': { output: ActionResult }
-    /** Puts text on the system clipboard, which a panel cannot reach. Fails with `no-clipboard`. */
-    'inbox.copy': { input: { text: string }; output: ActionResult }
     /**
      * Starts Orca's default agent with the prompt in the workspace selected in Orca and shows it, for Wired
      * points' Add a point, Align and Remove. Fails with `no-workspace` when none is selected.
