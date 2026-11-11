@@ -29,14 +29,13 @@ import {
 } from 'orca'
 import { strings } from './i18n'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type WaitingItem, type WiredPoint } from './protocol'
+import { preview } from './preview'
 import { DISCUSSIONS_URL, RECOMMENDED, recommended } from './recommended'
 
 const REFRESH_MS = 60_000
 /** The longest a request may wait: the worker reads the board, then gives the agent up to a minute to start. */
 const LAUNCH_TIMEOUT_MS = 120_000
 const REPO_URL = `https://github.com/${REPO}`
-/** The tallest a message or a reason grows, in pixels, before it scrolls. */
-const MESSAGE_HEIGHT = 240
 
 const inbox = atom<Inbox | null>(null)
 /** The last failed request or action, shown until the next one succeeds. */
@@ -52,6 +51,8 @@ const recommendedOpen = atom('recommendedOpen', true, { persist: 'plugin' })
 const starred = atom('starred', false, { persist: 'plugin' })
 /** busy while gh stars; failed: gh is missing or signed out, so the footer links to the page for this run. */
 const starring = atom<'idle' | 'busy' | 'failed'>('idle')
+/** The messages (by id) and asks (by path) shown whole after Show more. */
+const expanded = atom<Record<string, boolean>>({})
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const t = () => strings(read(inbox)?.language ?? 'auto', env.locale)
@@ -110,14 +111,23 @@ async function addRecommended(p: WiredPoint): Promise<void> {
 const removeRecommended = (p: WiredPoint) => act(plugin.request('inbox.removeRecommended', { id: p.id }), refresh)
 
 /**
- * A message or a reason as the CLI sent it: GitHub-flavoured Markdown. A long one scrolls inside its own box, so
- * one message never pushes the rest out of sight.
+ * A message or a reason as the CLI sent it: GitHub-flavoured Markdown. A long one shows its start, and Show more
+ * shows it whole; id names it in `expanded`.
  */
-function body(text: string) {
+function body(text: string, id: string) {
+  const s = t()
+  const start = preview(text)
+  if (start === null) return <Markdown content={text} />
+  const open = read(expanded)[id] === true
   return (
-    <Box maxHeight={MESSAGE_HEIGHT} scroll="y" minWidth={0}>
-      <Markdown content={text} />
-    </Box>
+    <Stack gap="xs">
+      <Markdown content={open ? text : start} />
+      <Row>
+        <Button size="xs" variant="ghost" onPress={() => set(expanded, { ...read(expanded), [id]: !open })}>
+          {open ? s.showLessText : s.showMoreText}
+        </Button>
+      </Row>
+    </Stack>
   )
 }
 
@@ -173,7 +183,7 @@ function waitingItem(w: WaitingItem) {
           </Text>
         )}
       </Row>
-      {w.reason !== null ? body(w.reason) : <Text size="sm">{s.noReason}</Text>}
+      {w.reason !== null ? body(w.reason, `ask:${w.path}`) : <Text size="sm">{s.noReason}</Text>}
       <Row gap="xs" align="center" wrap>
         <Button size="sm" variant="solid" tone="accent" icon="terminal" tooltip={s.goToTip} onPress={() => goTo(w)}>
           {s.goTo}
@@ -216,7 +226,7 @@ function messageRow(m: InboxMessage) {
       <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
         {m.key}
       </Text>
-      {body(m.text)}
+      {body(m.text, `message:${m.id}`)}
       <Row justify="between" align="center" gap="sm">
         <Text muted size="xs">
           <RelativeTime at={m.at} />

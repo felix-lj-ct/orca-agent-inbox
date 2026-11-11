@@ -55,7 +55,8 @@ plugin is installed.
 
     In PowerShell: `$text | agent-inbox notify <key> -`. A message that is empty on stdin is a usage error.
   - Images show only from the plugin's own files: a link to an image on the web does not show.
-  - The panel shows up to 4,000 characters, and scrolls a long message inside its box; the log keeps it whole.
+  - The panel shows up to 4,000 characters; the log keeps it whole. A message of more than 6 lines or 300
+    characters shows its start with **Show more**, so put what matters first.
     Control characters other than tab and line breaks are dropped.
 - **`<url>`** is optional, for `notify` and `ask`: the page the person opens to act on the message, such as a
   pull request, a CI run or a ticket. The panel shows **Open link** on the message or the card.

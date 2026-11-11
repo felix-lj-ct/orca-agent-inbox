@@ -37,6 +37,9 @@ const en = {
   markRead: 'Mark read',
   markAllRead: 'Mark all read',
   showMore: (n: number) => `Show more (${n} more)`,
+  /** under a long message or reason, which shows its start */
+  showMoreText: 'Show more',
+  showLessText: 'Show less',
   openLink: 'Open link',
   openLinkFailed: (e: string) => `Could not open the link: ${e}`,
   points: (n: number) => `Wired points (${n})`,
@@ -124,6 +127,8 @@ const zhCN: Strings = {
   markRead: '标为已读',
   markAllRead: '全部标为已读',
   showMore: (n) => `显示更多（还有 ${n} 条）`,
+  showMoreText: '展开',
+  showLessText: '收起',
   openLink: '打开链接',
   openLinkFailed: (e) => `打不开链接：${e}`,
   points: (n) => `接入点（${n}）`,

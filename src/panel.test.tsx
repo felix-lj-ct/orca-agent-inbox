@@ -80,7 +80,7 @@ test('speaks Chinese when set, and explains a workspace without a terminal', asy
   }
 })
 
-test('messages and reasons are Markdown, each in a box that scrolls past 240 pixels', async () => {
+test('messages and reasons are Markdown', async () => {
   const text = '## Build failed\n\n- step `test`\n- see **logs**'
   const host = mockHost({
     requests: {
@@ -98,6 +98,25 @@ test('messages and reasons are Markdown, each in a box that scrolls past 240 pix
     assert.ok(view.find({ type: 'Text', text: 'BUILD' }))
     assert.deepEqual(view.errors, [])
     assert.deepEqual(view.refusals, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('a long message shows its start, and Show more shows it whole until Show less', async () => {
+  const text = Array.from({ length: 10 }, (_, i) => `- line ${i + 1}`).join('\n')
+  const host = mockHost({
+    requests: { 'inbox.list': () => ({ ...inbox('en', false), messages: [{ id: 'm1', at: Date.now(), key: 'LONG', text, url: null, read: false }] }) }
+  })
+  const view = await mount(panel, { host })
+  const shown = () => String(view.find({ type: 'Markdown' })?.props.content)
+  try {
+    assert.equal(shown(), '- line 1\n- line 2\n- line 3\n- line 4\n- line 5\n- line 6 …')
+    await view.press({ text: 'Show more' })
+    assert.equal(shown(), text)
+    await view.press({ text: 'Show less' })
+    assert.ok(shown().endsWith('…'))
+    assert.deepEqual(view.errors, [])
   } finally {
     await view.unmount()
   }
