@@ -80,6 +80,48 @@ test('speaks Chinese when set, and explains a workspace without a terminal', asy
   }
 })
 
+test('messages and reasons are Markdown', async () => {
+  const text = '## Build failed\n\n- step `test`\n- see **logs**'
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => ({
+        ...inbox('en'),
+        waiting: [{ ...inbox('en').waiting[0], reason: 'Pick one:\n1. `A`\n2. `B`' }],
+        messages: [{ id: 'm1', at: Date.now(), key: 'BUILD', text, url: null, read: false }]
+      })
+    }
+  })
+  const view = await mount(panel, { host })
+  try {
+    const shown = view.findAll({ type: 'Markdown' }).map((node) => String(node.props.content))
+    assert.deepEqual(shown, ['Pick one:\n1. `A`\n2. `B`', text])
+    assert.ok(view.find({ type: 'Text', text: 'BUILD' }))
+    assert.deepEqual(view.errors, [])
+    assert.deepEqual(view.refusals, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('a long message shows its start, and Show more shows it whole until Show less', async () => {
+  const text = Array.from({ length: 10 }, (_, i) => `- line ${i + 1}`).join('\n')
+  const host = mockHost({
+    requests: { 'inbox.list': () => ({ ...inbox('en', false), messages: [{ id: 'm1', at: Date.now(), key: 'LONG', text, url: null, read: false }] }) }
+  })
+  const view = await mount(panel, { host })
+  const shown = () => String(view.find({ type: 'Markdown' })?.props.content)
+  try {
+    assert.equal(shown(), '- line 1\n- line 2\n- line 3\n- line 4\n- line 5\n- line 6 …')
+    await view.press({ text: 'Show more' })
+    assert.equal(shown(), text)
+    await view.press({ text: 'Show less' })
+    assert.ok(shown().endsWith('…'))
+    assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
 test('asks the worker for the newest messages, and Show more asks for more', async () => {
   const all: InboxMessage[] = Array.from({ length: 45 }, (_, i) => {
     const n = String(i + 1).padStart(2, '0')
@@ -337,7 +379,7 @@ test('lists the wired points, asks first, and says how they get there when there
   }
 })
 
-test('Add a point, Align and Remove start an agent with a prompt, and say when no workspace is selected', async () => {
+test('Add a point, Align, Edit and Remove start an agent with a prompt, and say when no workspace is selected', async () => {
   const launched: string[] = []
   const point = { id: 'build-failed', kind: 'notify' as const, key: 'BUILD', when: 'the build failed', wiredIn: 'build.sh' }
   const host = mockHost({
@@ -345,7 +387,7 @@ test('Add a point, Align and Remove start an agent with a prompt, and say when n
       'inbox.list': () => ({ ...inbox('en', false), points: [point] }),
       'inbox.launch': (input) => {
         launched.push((input as { prompt: string }).prompt)
-        return launched.length < 4 ? { ok: true } : { ok: false, error: 'no-workspace' }
+        return launched.length < 5 ? { ok: true } : { ok: false, error: 'no-workspace' }
       }
     }
   })
@@ -354,15 +396,17 @@ test('Add a point, Align and Remove start an agent with a prompt, and say when n
     await view.toggle({ type: 'Collapsible', label: 'Wired points (1)' })
     await view.press({ text: 'Add a point' })
     await view.press({ text: 'Align' })
+    await view.press({ text: 'Edit' })
     await view.press({ text: 'Remove' })
     assert.deepEqual(launched, [
       'Read /h/.config/agent-inbox/agent-guide.md and add one Agent Inbox point to my workflow: ask me what should send, wire it where it belongs, and record it with agent-inbox point add.',
       'Read /h/.config/agent-inbox/agent-guide.md and align my Agent Inbox points: compare the recorded points with the agent-inbox calls in my workflow, show me the differences and the point add and point remove commands that fix the records, and run them once I agree. Change no workflow files.',
+      'Read /h/.config/agent-inbox/agent-guide.md and change the Agent Inbox point build-failed (notify, key BUILD; the build failed; wired in build.sh): find its call in my workflow, show it to me and ask me how to change it, such as when it sends, its key, its message or where it is wired. Then change the call and record it again with agent-inbox point add build-failed.',
       'Read /h/.config/agent-inbox/agent-guide.md and remove the Agent Inbox point build-failed (the build failed; wired in build.sh): take its call out of my workflow and run agent-inbox point remove build-failed.'
     ])
     // the worker reads the board, then gives the agent up to a minute to start: past the 30 s default
     const launches = host.callsOf('plugin.request').filter((call: { name: string }) => call.name === 'inbox.launch')
-    assert.deepEqual(launches.map((call: { timeoutMs?: number }) => call.timeoutMs), [120_000, 120_000, 120_000])
+    assert.deepEqual(launches.map((call: { timeoutMs?: number }) => call.timeoutMs), [120_000, 120_000, 120_000, 120_000])
     assert.equal(view.find({ text: 'Select a workspace in Orca first; the agent starts there' }), null)
     await view.press({ text: 'Add a point' })
     assert.ok(view.find({ text: 'Select a workspace in Orca first; the agent starts there' }))
@@ -459,7 +503,8 @@ test('a recommended point is added with one press and then shows under Wired poi
     assert.ok(view.find({ text: 'An agent asks you with AskUserQuestion; it goes once you answer' }))
     assert.ok(view.find({ text: 'key <ticket or folder> · the Agent Inbox plugin' }))
 
-    // the plugin wires it, so Remove takes it out without an agent
+    // the plugin wires it as it is: no Edit, and Remove takes it out without an agent
+    assert.equal(view.find({ text: 'Edit' }), null)
     await view.press({ text: 'Remove' })
     assert.deepEqual(requests.slice(1), [['remove', { id: 'builtin.ask-question' }]])
     assert.ok(view.find({ type: 'Collapsible', label: 'Recommended points (1)' }))
@@ -479,6 +524,8 @@ test('the settings hide Recommended points, while an added one stays under Wired
     assert.ok(view.find({ type: 'Collapsible', label: '接入点（1）' }))
     assert.ok(view.find({ text: 'agent 用 AskUserQuestion 向你提问；回答后自动移走' }))
     assert.ok(view.find({ text: 'key：<ticket 或目录名> · Agent Inbox 插件' }))
+    assert.ok(view.find({ type: 'Button', text: '新增' }))
+    assert.equal(view.find({ type: 'Button', text: '修改' }), null)
     assert.deepEqual(view.errors, [])
   } finally {
     await view.unmount()

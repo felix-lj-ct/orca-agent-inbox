@@ -32,7 +32,7 @@ const WSL_RETRY_MS = 300_000
 /** A request answer stops at 1 MiB: the messages get half of it, the board and the points share the rest. */
 const MESSAGE_BYTES = 512 * 1024
 /** The panel gets this much of a message's text and key; the log keeps them whole. */
-const MAX_TEXT = 2_000
+const MAX_TEXT = 4_000
 const MAX_KEY = 200
 /** A longer link is left out, since a cut one would not open. */
 const MAX_URL = 8_192

@@ -22,8 +22,8 @@ plugin is installed.
 
 | Command | The person sees | Runs from | Needs Orca running |
 | --- | --- | --- | --- |
-| `notify <key> "<message>" [<url>]` | An unread line under Messages, with **Open link** when you give a URL | Anywhere | No |
-| `ask [--worktree <path>] <key> "<message>" [<url>]` | A card under Waiting on you with the message, and **Open link** when you give a URL; the workspace moves to the waiting column with `<key>: <message>` as its comment and an unread dot | Inside an Orca workspace, or anywhere with `--worktree` | Yes |
+| `notify <key> "<message>" [<url>]` | An unread message under Messages, rendered as Markdown, with **Open link** when you give a URL | Anywhere | No |
+| `ask [--worktree <path>] <key> "<message>" [<url>]` | A card under Waiting on you with the message rendered as Markdown, and **Open link** when you give a URL; the workspace moves to the waiting column with `<key>: <the first line of the message>` as its comment and an unread dot | Inside an Orca workspace, or anywhere with `--worktree` | Yes |
 | `resolve [--worktree <path>] <key>` | The card goes (or, if the person keeps asks until they mark them handled, says the agent resumed); the workspace moves back to the resolved column, if it is still in the waiting column | The workspace of the `ask` | Yes |
 | `test [--worktree <path>]` | A TEST card under Waiting on you; `resolve TEST` removes it | An Orca workspace | Yes |
 | `hook` | Nothing: it prints the brief, a few lines that tell an agent about the inbox and its commands and leave to it what to send; while the point `builtin.ask-question` is recorded, the brief also says that a question asked with AskUserQuestion reaches the panel by itself | An agent's session-start hook; it prints nothing outside an Orca terminal | No |
@@ -36,9 +36,28 @@ plugin is installed.
 
 - **`<key>`** names the work: a ticket id, a branch, a job or automation name. The panel shows it in bold
   before the message, up to 200 characters.
-- **`<message>`** is one line of about 120 characters: what you need, or what happened and what the person
-  should do. The panel shows up to 2,000 characters; the log keeps it whole. Control characters other than tab
-  and line breaks are dropped.
+- **`<message>`** is GitHub-flavoured Markdown, which the panel renders.
+  - The first line says it all in about 120 characters: what you need, or what happened and what the person
+    should do. The board comment of an `ask` and the CLI's output show only that line, without the `#` of a
+    heading.
+  - A few lines of detail may follow when they help the person decide or act: the options as a list, the
+    failed steps, a small table, `code`, **bold**, links. Logs and long reports belong behind `<url>`.
+  - `-` as the message reads it from stdin, up to its end, without the line breaks at the end. Use it for a
+    message of more than one line, and for text the shell would change:
+
+    ```sh
+    agent-inbox ask PAY-2318 - "https://github.com/acme/payments-api/pull/924" <<'EOF'
+    Pick the index migration for **staging**:
+    1. Drop `settlement_batch_idx` now (~6 min lock)
+    2. Rebuild it `CONCURRENTLY` (~40 min, no lock)
+    EOF
+    ```
+
+    In PowerShell: `$text | agent-inbox notify <key> -`. A message that is empty on stdin is a usage error.
+  - Images show only from the plugin's own files: a link to an image on the web does not show.
+  - The panel shows up to 4,000 characters; the log keeps it whole. A message of more than 6 lines or 300
+    characters shows its start with **Show more**, so put what matters first.
+    Control characters other than tab and line breaks are dropped.
 - **`<url>`** is optional, for `notify` and `ask`: the page the person opens to act on the message, such as a
   pull request, a CI run or a ticket. The panel shows **Open link** on the message or the card.
   - Orca opens only `http`, `https` and `mailto` links. **Open link** shows for another link, but it does not
@@ -88,7 +107,7 @@ or `^`, and cuts one at a line break. In PowerShell, quote such an argument twic
 
 ## Output and exit codes
 
-When a command works, the CLI prints one line, such as `notify <key>: <message>`. When it fails, it prints
+When a command works, the CLI prints one line, such as `notify <key>: <the first line of the message>`. When it fails, it prints
 `agent-inbox: <the reason>` to stderr, or its usage for wrong arguments.
 
 | Code | Meaning |

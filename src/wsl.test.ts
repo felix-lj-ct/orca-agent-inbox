@@ -150,12 +150,12 @@ test('in a WSL distro, the worker links the CLI, which asks, notifies and resolv
     const cwds = orca.cliCwds()
     assert.equal(cwds.length, 3, cwds.join('\n'))
     for (const cwd of cwds) assert.ok([`\\\\wsl.localhost\\${src}`, `\\\\wsl$\\${src}`].includes(cwd.toLowerCase()), cwd)
-    // one call a line: the message's line break splits its call in two
+    // the board comment takes the message's first line only
     const calls = orca.calls().filter((c) => !/^(worktree ps|terminal list) /.test(c)).join('\n')
     assert.equal(
       calls,
       [
-        `worktree set --worktree path:${linux} --workspace-status in-review --comment K-1: ${message} --unread --json`,
+        `worktree set --worktree path:${linux} --workspace-status in-review --comment K-1: ${message.split('\n')[0]} --unread --json`,
         `worktree show --worktree path:${linux} --json`,
         `worktree set --worktree path:${linux} --workspace-status in-progress --comment  --json`
       ].join('\n')

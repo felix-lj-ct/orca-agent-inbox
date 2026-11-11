@@ -7,8 +7,10 @@ An [Orca](https://onorca.dev) plugin: one sidebar panel for what your agents and
 - **Waiting on you**: workspaces an agent parked on the board for your decision or approval, with the reason.
   **Go to agent** jumps to the terminal that asked; **Mark handled** moves the workspace back.
 - **Messages**: what you should know (a long job failed, a credential expired), kept 7 days by default.
-- **Wired points**: the places in your workflow that send here. **Add a point**, **Align** and **Remove** have
-  your agent make the change once you agree.
+  Messages and reasons are Markdown: a first line that says it all, then lists, `code`, tables or links when
+  they help.
+- **Wired points**: the places in your workflow that send here. **Add a point**, **Align**, **Edit** and
+  **Remove** have your agent make the change once you agree; **Edit** asks you how to change the point first.
 - **Recommended points**: points Agent Inbox wires itself, added with one press, such as the questions your
   agents ask with AskUserQuestion. See [Recommended points](#recommended-points).
 
@@ -120,7 +122,18 @@ agent-inbox resolve <key>                      # it no longer does
 agent-inbox hook                               # what an agent needs to know to send here
 ```
 
-`<key>` names the work: a ticket id, a job name. Run `agent-inbox` with no arguments for every command. Add
+`<key>` names the work: a ticket id, a job name. `<message>` is Markdown, whose first line says it all; pass `-`
+to read a message of several lines from stdin:
+
+```sh
+agent-inbox notify nightly-e2e - "$REPORT_URL" <<'EOF'
+**3 of 412 tests failed** in `checkout-flow`
+- pays with saved card: timeout
+- applies coupon: 500 from /cart
+EOF
+```
+
+Run `agent-inbox` with no arguments for every command. Add
 `~/.config/agent-inbox/bin` to your `PATH` to call it by name. In a script, end the call with `|| true` so a
 failed message does not fail the job.
 
@@ -159,7 +172,7 @@ mkdir -p ~/.config && ln -sfn "$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2
 - **An AppData folder that is not in your home folder** (folder redirection, a roaming profile on a server).
   Orca gives plugins no `APPDATA`, so the plugin takes `%USERPROFILE%\AppData\Roaming`, and the `orca` and `gh`
   commands it runs do not find Orca or your `gh` sign-in. **Waiting on you**, **Go to agent**, **Mark handled**,
-  **Add a point**, **Align**, **Remove** and **Star on GitHub** fail; **Messages** and the CLI in your terminals
+  **Add a point**, **Align**, **Edit**, **Remove** and **Star on GitHub** fail; **Messages** and the CLI in your terminals
   work.
 
 ## Settings

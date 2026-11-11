@@ -11,6 +11,7 @@ import {
   env,
   IconButton,
   Link,
+  Markdown,
   plugin,
   read,
   RelativeTime,
@@ -28,6 +29,7 @@ import {
 } from 'orca'
 import { strings } from './i18n'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type WaitingItem, type WiredPoint } from './protocol'
+import { preview } from './preview'
 import { DISCUSSIONS_URL, RECOMMENDED, recommended } from './recommended'
 
 const REFRESH_MS = 60_000
@@ -49,6 +51,8 @@ const recommendedOpen = atom('recommendedOpen', true, { persist: 'plugin' })
 const starred = atom('starred', false, { persist: 'plugin' })
 /** busy while gh stars; failed: gh is missing or signed out, so the footer links to the page for this run. */
 const starring = atom<'idle' | 'busy' | 'failed'>('idle')
+/** The messages (by id) and asks (by path) shown whole after Show more. */
+const expanded = atom<Record<string, boolean>>({})
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const t = () => strings(read(inbox)?.language ?? 'auto', env.locale)
@@ -106,6 +110,27 @@ async function addRecommended(p: WiredPoint): Promise<void> {
 }
 const removeRecommended = (p: WiredPoint) => act(plugin.request('inbox.removeRecommended', { id: p.id }), refresh)
 
+/**
+ * A message or a reason as the CLI sent it: GitHub-flavoured Markdown. A long one shows its start, and Show more
+ * shows it whole; id names it in `expanded`.
+ */
+function body(text: string, id: string) {
+  const s = t()
+  const start = preview(text)
+  if (start === null) return <Markdown content={text} />
+  const open = read(expanded)[id] === true
+  return (
+    <Stack gap="xs">
+      <Markdown content={open ? text : start} />
+      <Row>
+        <Button size="xs" variant="ghost" onPress={() => set(expanded, { ...read(expanded), [id]: !open })}>
+          {open ? s.showLessText : s.showMoreText}
+        </Button>
+      </Row>
+    </Stack>
+  )
+}
+
 /** Not through act: a star that fails is no problem of the inbox, so it stays in the footer. */
 async function star(): Promise<void> {
   set(starring, 'busy')
@@ -158,7 +183,7 @@ function waitingItem(w: WaitingItem) {
           </Text>
         )}
       </Row>
-      <Text size="sm">{w.reason ?? s.noReason}</Text>
+      {w.reason !== null ? body(w.reason, `ask:${w.path}`) : <Text size="sm">{s.noReason}</Text>}
       <Row gap="xs" align="center" wrap>
         <Button size="sm" variant="solid" tone="accent" icon="terminal" tooltip={s.goToTip} onPress={() => goTo(w)}>
           {s.goTo}
@@ -189,7 +214,8 @@ function projectGroup(group: { repo: string; items: WaitingItem[] }) {
 }
 
 /**
- * Unread: the key in bold, Open link filled and a Mark read button; read: the whole line muted. Open link sits on
+ * The key, then the message as Markdown. Unread: the key in bold, Open link filled and a Mark read button; read:
+ * the key muted. Open link sits on
  * the right with Mark read, not after the time: Orca opens a link only from a control that has not moved since
  * it last looked, and the time changes width as it counts, every second in the first minute.
  */
@@ -197,12 +223,10 @@ function messageRow(m: InboxMessage) {
   const s = t()
   return (
     <Stack gap="xs">
-      <Text size="sm" muted={m.read}>
-        <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
-          {m.key}
-        </Text>{' '}
-        {m.text}
+      <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
+        {m.key}
       </Text>
+      {body(m.text, `message:${m.id}`)}
       <Row justify="between" align="center" gap="sm">
         <Text muted size="xs">
           <RelativeTime at={m.at} />
@@ -323,9 +347,9 @@ function messagesSection(data: Inbox) {
 }
 
 /**
- * Where the point shows as a badge, then when it sends; under it the key, the place that sends, and Remove. A
- * recommended point shows in the panel's language, and Remove takes it out at once, since the plugin wires it;
- * the others an agent takes out of the workflow.
+ * Where the point shows as a badge, then when it sends; under it the key, the place that sends, Edit and Remove. A
+ * recommended point shows in the panel's language, has no Edit, since the plugin wires it as it is, and Remove
+ * takes it out at once; the others an agent changes or takes out of the workflow.
  */
 function pointRow(p: WiredPoint, guide: string) {
   const s = t()
@@ -338,18 +362,27 @@ function pointRow(p: WiredPoint, guide: string) {
         <Text size="sm">{shown.when}</Text>
       </Row>
       <Row justify="between" align="center" gap="sm">
-        <Text muted size="xs">
-          {s.pointDetail(shown.key, shown.wiredIn)}
-        </Text>
-        <Button
-          size="xs"
-          variant="outline"
-          icon="delete"
-          tooltip={own ? s.removeRecommendedTip : s.removePointTip}
-          onPress={() => (own ? removeRecommended(p) : launch(s.removePointPrompt(guide, p)))}
-        >
-          {s.removePoint}
-        </Button>
+        <Box grow minWidth={0}>
+          <Text muted size="xs">
+            {s.pointDetail(shown.key, shown.wiredIn)}
+          </Text>
+        </Box>
+        <Box direction="row" gap="xs" align="center" shrink={false}>
+          {!own && (
+            <Button size="xs" variant="outline" icon="edit" tooltip={s.editPointTip} onPress={() => launch(s.editPointPrompt(guide, p))}>
+              {s.editPoint}
+            </Button>
+          )}
+          <Button
+            size="xs"
+            variant="outline"
+            icon="delete"
+            tooltip={own ? s.removeRecommendedTip : s.removePointTip}
+            onPress={() => (own ? removeRecommended(p) : launch(s.removePointPrompt(guide, p)))}
+          >
+            {s.removePoint}
+          </Button>
+        </Box>
       </Row>
     </Stack>
   )
