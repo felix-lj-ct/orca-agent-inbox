@@ -277,9 +277,9 @@ test('cuts long texts and leaves out long links, and stops before the answer wou
   writeFileSync(
     logPath,
     [
-      notify(0, 'x'.repeat(5_000), `https://ci/${'q'.repeat(9_000)}`),
-      // 2,000 Chinese characters: 6 KB a message as UTF-8
-      ...Array.from({ length: 400 }, (_, i) => notify(i + 1, '长'.repeat(3_000)))
+      notify(0, 'x'.repeat(6_000), `https://ci/${'q'.repeat(9_000)}`),
+      // 4,000 Chinese characters: 12 KB a message as UTF-8
+      ...Array.from({ length: 400 }, (_, i) => notify(i + 1, '长'.repeat(5_000)))
     ]
       .reverse()
       .join('\n') + '\n'
@@ -288,7 +288,7 @@ test('cuts long texts and leaves out long links, and stops before the answer wou
     const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
     const inbox = await worker.request('inbox.list', { unread: 1_000, read: 0 })
     const [long] = inbox.messages
-    assert.equal(long.text, `${'x'.repeat(2_000)}…`)
+    assert.equal(long.text, `${'x'.repeat(4_000)}…`)
     assert.equal(long.url, null)
     assert.equal(inbox.unreadCount, 401)
     assert.ok(inbox.messages.length < 401)

@@ -1,6 +1,6 @@
 ---
 name: agent-inbox
-description: Use when the person asks where their workflow should ask them or tell them something through Agent Inbox, asks to set up, review or extend Agent Inbox for their workflow, asks to add or remove one Agent Inbox point, or asks to align the recorded points with the workflow. Explains how to tell the person's agents about the inbox through a session-start hook so that they judge what to send, how to find the points of scripts and Orca automations that should send, and how to wire each one, in a hook or a script before an instruction file or a prompt. For a whole workflow it produces a proposal and changes no files; for one point it makes the change once the person agrees; to align, it changes only the records, once the person agrees.
+description: Use when the person asks where their workflow should ask them or tell them something through Agent Inbox, asks to set up, review or extend Agent Inbox for their workflow, asks to add, change or remove one Agent Inbox point, or asks to align the recorded points with the workflow. Explains how to tell the person's agents about the inbox through a session-start hook so that they judge what to send, how to find the points of scripts and Orca automations that should send, and how to wire each one, in a hook or a script before an instruction file or a prompt. For a whole workflow it produces a proposal and changes no files; for one point it makes the change once the person agrees; to align, it changes only the records, once the person agrees.
 ---
 
 # Agent Inbox: find where a workflow should send
@@ -10,8 +10,8 @@ Agent Inbox is an Orca plugin. Its sidebar panel shows the person three lists:
 - **Waiting on you**: workspaces that an agent moved to the board's waiting column with `agent-inbox ask`,
   each with the reason, a button that goes to the terminal of the agent that asked, and a link when the agent
   gave one.
-- **Messages**: lines sent with `agent-inbox notify`, each with a link when the sender gave one, kept for the
-  retention window (default 7 days).
+- **Messages**: messages sent with `agent-inbox notify`, their text rendered as Markdown, each with a link when
+  the sender gave one, kept for the retention window (default 7 days).
 - **Wired points**: the points of the workflow that send, recorded with `agent-inbox point add`, so the
   person can see what may write to the inbox and where it is wired.
 
@@ -22,8 +22,8 @@ What the person asked decides your job:
   something, and give them a proposal that says what to wire and how (sections 1 to 5). **Change no
   files.** The person reads the proposal, cuts rows, and applies it later or asks for it in a separate
   request.
-- **Add one point, or remove the point `<id>`**: the panel's **Add a point** and **Remove** buttons start you
-  with this request. Make that one change in the workflow and in the records, once the person agrees to it
+- **Add one point, or change or remove the point `<id>`**: the panel's **Add a point**, **Edit** and **Remove**
+  buttons start you with this request. Make that one change in the workflow and in the records, once the person agrees to it
   (section 6).
 - **Align the points**: the panel's **Align** button starts you with this request. Compare the records with
   the calls in the workflow and fix the records, once the person agrees (section 7). **Change no workflow
@@ -141,8 +141,10 @@ Keep a point only if all of these are true:
 - **The person acts on it or wants to know it.** Progress updates and routine successes are not points.
 - **One channel.** If the person already gets it through a channel they read, propose to point that channel
   at `agent-inbox` or leave the point out. Never add a second message for the same event.
-- **One line.** It fits in about 120 characters: what is needed, or what happened and what the person should
-  do. Add the URL when there is a page to open (`cli.md` says which links open). No secrets: the log is a plain
+- **Short.** The first line says it all in about 120 characters: what is needed, or what happened and what the
+  person should do. The board comment of an `ask` shows only that line. A few lines of Markdown detail may
+  follow it (a list of the options, the failed steps, a small table), sent through stdin as `cli.md` says under
+  "Arguments"; no logs or long reports, which belong behind the link. Add the URL when there is a page to open (`cli.md` says which links open). No secrets: the log is a plain
   text file.
 - **Once.** A lasting condition (an expired credential, a missing input) is sent once, not on every run.
 
@@ -211,7 +213,7 @@ runs as written in both.
 
 **B. Script or precheck**: one call, its result ignored. For PowerShell, a `.bat` or `.cmd` script or another
 language, and for arguments with `&`, `|`, `<`, `>`, `^` or a line break, call it as `cli.md` says under "In a
-script".
+script". A message of more than one line goes through stdin, with `-` as the message.
 
 ```sh
 ~/.config/agent-inbox/bin/agent-inbox notify nightly-build "build failed: 3 tests red" "$BUILD_URL" || true
@@ -267,7 +269,7 @@ Give the person, in this order:
 
 Stop after the proposal.
 
-## 6. Add or remove one point
+## 6. Add, change or remove one point
 
 Change only what this one point needs. Before you change anything, show the person the row (as in the
 trigger table of section 5) and the exact change, and wait for their OK. Edit the file where the workflow
@@ -288,6 +290,19 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 6. Check it: for the hook, run `agent-inbox hook` in an Orca terminal and show its first line; for a `notify`
    point, send a drill (`agent-inbox notify DRILL "drill message"`); else tell the person how to trigger the
    point. Show the new row from `agent-inbox point list`.
+
+**Change the point `<id>`:**
+
+1. Read the point from `agent-inbox point list`. If its id starts with `builtin.`, the plugin wires it as it
+   is: tell the person so, and stop.
+2. Find its call, as step 2 of "Remove the point" says. Show it to the person with the record, and ask them in
+   one question what to change: when it sends, its kind, its key, its message or where it is wired. Offer the
+   changes that fit, such as a first line that says it all, or Markdown detail for a message that needs it.
+3. Check the changed point against the rules in section 3 ("Keep a point only if"). Show the old and the new
+   lines; wait for the OK.
+4. Make the change, then record it again with `agent-inbox point add <the same id> ...` (snippet D): the same
+   id replaces the record. If the place moved, take the old call out.
+5. Check it as step 6 of "Add a point" says, and show the row from `agent-inbox point list`.
 
 **Remove the point `<id>`:**
 
@@ -326,9 +341,9 @@ records.
    | A record without a call, but its key still sends | Nothing; say that the call is in a place you did not search |
 
 5. List the problems you see in the calls themselves, against the rules in sections 3 and 4: a script call
-   whose failure fails the job (no `|| true` or its equivalent), a message longer than one line, a second
+   whose failure fails the job (no `|| true` or its equivalent), a message whose first line does not say it all or with more than a few lines of detail, a second
    channel for the same event, a secret in a message, two calls for one event, a hook that sends on every
-   turn. Do not fix them; the person can fix them, or use **Add a point** and **Remove**.
+   turn. Do not fix them; the person can fix them, or use **Add a point**, **Edit** and **Remove**.
 6. Show the table, the commands and the problems, and wait for the person's OK. If every record matches its
    call, say so and stop.
 7. Run the commands the person agreed to, then show `agent-inbox point list`.

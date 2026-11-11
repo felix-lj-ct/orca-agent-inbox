@@ -22,7 +22,8 @@ const USAGE = `  agent-inbox notify <key> <message> [<url>]
       a line in the panel's Messages: something happened, nothing waits on the person
   agent-inbox ask [--worktree <path>] <key> <message> [<url>]
       you stop until the person answers: the workspace moves to the waiting column with
-      "<key>: <message>" as its comment and the unread dot, and the panel lists it under Waiting on you
+      "<key>: <first line of the message>" as its comment and the unread dot, and the panel lists it
+      under Waiting on you
   agent-inbox resolve [--worktree <path>] <key>
       the person answered: the workspace moves back to the resolved column, if it is still waiting
   agent-inbox test [--worktree <path>]
@@ -40,6 +41,9 @@ const USAGE = `  agent-inbox notify <key> <message> [<url>]
       to send here, and that it judges what is worth sending; nothing outside an Orca terminal
   agent-inbox where
       print the settings in use
+  <message> is GitHub-flavoured Markdown, which the panel renders: a first line that says it all, then
+      if needed a few lines of detail (lists, \`code\`, **bold**, links, tables). A message of - is read
+      from stdin, for more than one line: agent-inbox notify <key> - [<url>] <<'EOF' ... EOF
 `
 
 // The recommended point the plugin wires itself (src/recommended.ts in the plugin): while it is recorded, a
@@ -55,12 +59,12 @@ ${
 - Before you stop for their decision, approval or help in another way, run`
     : '- Before you stop for their decision, approval or help, run'
 }
-    ~/.config/agent-inbox/bin/agent-inbox ask <key> "<what you need, one line>"
+    ~/.config/agent-inbox/bin/agent-inbox ask <key> "<what you need>"
   and once they answer and you go on, run
     ~/.config/agent-inbox/bin/agent-inbox resolve <key>
 - For something they should know and would not see otherwise, run
-    ~/.config/agent-inbox/bin/agent-inbox notify <key> "<what happened; what to do, one line>" [<url>]
-<key> names the work, such as a ticket id or a branch. Orca already shows when you finish a turn. The log is a plain text file: send no secrets.
+    ~/.config/agent-inbox/bin/agent-inbox notify <key> "<what happened; what to do>" [<url>]
+<key> names the work, such as a ticket id or a branch. The message is Markdown: a first line that says it all; for a few lines of detail (a list, \`code\`, a table) pass - as the message and the text on stdin. Orca already shows when you finish a turn. The log is a plain text file: send no secrets.
 `
 
 const WINDOWS = process.platform === 'win32'
@@ -148,6 +152,10 @@ function orcaCli(...args) {
 // Control characters other than tab, newline and return are dropped; JSON.stringify escapes the rest.
 const clean = (text) => text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '')
 const orNull = (text) => (text ? clean(text) : null)
+/** A message of - is read from stdin, so it can span lines and hold any character the shell would mangle. */
+const messageArg = (message) => (message === '-' ? readFileSync(0, 'utf8').replace(/\s+$/, '') : message)
+/** The board comment of an ask: the first line of the message, without Markdown's heading marks. */
+const headline = (message) => (message.split('\n').find((line) => line.trim()) ?? '').replace(/^\s*#+\s+/, '').trim()
 const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -267,20 +275,22 @@ function main(argv) {
 
   switch (cmd) {
     case 'notify': {
-      const [key, message, url = ''] = argv
+      const [key, given, url = ''] = argv
+      const message = given ? messageArg(given) : ''
       if (argv.length < 2 || !message) usage()
       append('notify', key, message, url, workspacePath(wt))
-      return out(`notify ${key}: ${message}\n`)
+      return out(`notify ${key}: ${headline(message)}\n`)
     }
     case 'ask':
     case 'test': {
       if (cmd === 'test') argv = ['TEST', 'Drill from agent-inbox test; undo it with: agent-inbox resolve TEST']
-      const [key, message, url = ''] = argv
+      const [key, given, url = ''] = argv
+      const message = given ? messageArg(given) : ''
       if (argv.length < 2 || !message) usage()
       const path = workspace()
-      const set = orcaCli('worktree', 'set', '--worktree', `path:${path}`, '--workspace-status', WAITING, '--comment', `${key}: ${message}`, '--unread')
+      const set = orcaCli('worktree', 'set', '--worktree', `path:${path}`, '--workspace-status', WAITING, '--comment', `${key}: ${headline(message)}`, '--unread')
       append('ask', key, message, url, orcaPath(set.worktree, path))
-      return out(`ask ${key}: ${message}\n`)
+      return out(`ask ${key}: ${headline(message)}\n`)
     }
     case 'resolve': {
       if (argv.length < 1) usage()

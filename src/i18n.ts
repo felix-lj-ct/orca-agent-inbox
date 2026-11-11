@@ -46,6 +46,8 @@ const en = {
   pointDetail: (key: string, wiredIn: string) => `key ${key} · ${wiredIn}`,
   addPoint: 'Add a point',
   addPointTip: 'Start your default agent in the selected workspace to wire a new point and record it',
+  editPoint: 'Edit',
+  editPointTip: 'Start your default agent in the selected workspace: it asks you what to change in this point, then changes its call and its record',
   removePoint: 'Remove',
   removePointTip: 'Start your default agent in the selected workspace to take this point out of your workflow and its record',
   alignPoints: 'Align',
@@ -73,6 +75,8 @@ const en = {
   recommendedDiscussions: 'GitHub Discussions',
   addPointPrompt: (guide: string) =>
     `Read ${guide} and add one Agent Inbox point to my workflow: ask me what should send, wire it where it belongs, and record it with agent-inbox point add.`,
+  editPointPrompt: (guide: string, p: WiredPoint) =>
+    `Read ${guide} and change the Agent Inbox point ${p.id} (${p.kind}, key ${p.key}; ${p.when}; wired in ${p.wiredIn}): find its call in my workflow, show it to me and ask me how to change it, such as when it sends, its key, its message or where it is wired. Then change the call and record it again with agent-inbox point add ${p.id}.`,
   removePointPrompt: (guide: string, p: WiredPoint) =>
     `Read ${guide} and remove the Agent Inbox point ${p.id} (${p.when}; wired in ${p.wiredIn}): take its call out of my workflow and run agent-inbox point remove ${p.id}.`,
   alignPointsPrompt: (guide: string) =>
@@ -124,11 +128,13 @@ const zhCN: Strings = {
   openLinkFailed: (e) => `打不开链接：${e}`,
   points: (n) => `接入点（${n}）`,
   pointsDescription: '工作流里会写入这里的位置',
-  noPoints: '还没有登记接入点。点「新增接入点」让 agent 接入一处；想梳理整个工作流，用设置页「Log file」说明里的提示词。',
+  noPoints: '还没有登记接入点。点「新增」让 agent 接入一处；想梳理整个工作流，用设置页「Log file」说明里的提示词。',
   pointKind: (kind) => (kind === 'ask' ? '等你处理' : '消息'),
   pointDetail: (key, wiredIn) => `key：${key} · ${wiredIn}`,
-  addPoint: '新增接入点',
+  addPoint: '新增',
   addPointTip: '在当前选中的工作区打开默认 agent，接入一个新的点并登记',
+  editPoint: '修改',
+  editPointTip: '在当前选中的工作区打开默认 agent：先问你这个点要怎么调整，再改它的调用和登记',
   removePoint: '移除',
   removePointTip: '在当前选中的工作区打开默认 agent，把这个点从工作流和登记表里去掉',
   alignPoints: '对齐',
@@ -153,6 +159,8 @@ const zhCN: Strings = {
   moreRecommendations: '看大家接了哪些点，分享你的：',
   recommendedDiscussions: 'GitHub 讨论区',
   addPointPrompt: (guide) => `读 ${guide}，给我的工作流新增一个 Agent Inbox 接入点：先问我在什么场景发，接到它该在的位置，再用 agent-inbox point add 登记。`,
+  editPointPrompt: (guide, p) =>
+    `读 ${guide}，修改 Agent Inbox 接入点 ${p.id}（${p.kind}，key ${p.key}；${p.when}；接在 ${p.wiredIn}）：先在我的工作流里找到它的调用给我看，问我要怎么调整，比如什么时候发、key、消息内容或接入位置；再改调用，并用 agent-inbox point add ${p.id} 重新登记。`,
   removePointPrompt: (guide, p) =>
     `读 ${guide}，移除 Agent Inbox 接入点 ${p.id}（${p.when}；接在 ${p.wiredIn}）：把它的调用从我的工作流里去掉，再运行 agent-inbox point remove ${p.id}。`,
   alignPointsPrompt: (guide) =>
@@ -165,7 +173,7 @@ const zhCN: Strings = {
   setup: '接入 Agent Inbox',
   setupDescription: 'agent 和脚本怎么把消息发到这里',
   setupDoneTip: '不再显示这个待办；之后随时可以在「接入点」里新增',
-  setupBody: '点开下方「接入点」，点「新增接入点」：agent 会先问你在什么场景发，再接进工作流并登记。它下面的「推荐接入点」点一下就能接入。',
+  setupBody: '点开下方「接入点」，点「新增」：agent 会先问你在什么场景发，再接进工作流并登记。它下面的「推荐接入点」点一下就能接入。',
   starAsk: '觉得 Agent Inbox 好用？',
   star: '在 GitHub 点 Star',
   starTip: '用你的 GitHub 账号，通过本机的 gh 命令给 felix-lj-ct/orca-agent-inbox 点 Star',

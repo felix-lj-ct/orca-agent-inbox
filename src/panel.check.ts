@@ -4,6 +4,7 @@
 // orca plugin shot . --scenario cover --theme dark
 // `kept` shows the same in Chinese with an ask the agent resolved, kept until marked handled. `first-start` shows
 // the setup task alone. `recommended` and `recommended-zh` show Recommended points with nothing added yet.
+// `markdown` shows an ask and messages that use Markdown, as `agent-inbox notify <key> -` sends them from stdin.
 import { defineCheck } from 'orca/testing'
 import type { Inbox, InboxMessage } from './protocol'
 
@@ -110,6 +111,32 @@ export default defineCheck({
     settings: { language: 'zh-CN' },
     requests: {
       'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], showRecommendations: true })
+    }
+  },
+  markdown: {
+    requests: {
+      'inbox.list': () => ({
+        ...cover,
+        waiting: [
+          {
+            ...cover.waiting[0],
+            reason: 'Pick the index migration for **staging**:\n\n1. Drop `settlement_batch_idx` now (~6 min lock)\n2. Rebuild it `CONCURRENTLY` (~40 min, no lock)'
+          }
+        ],
+        messages: [
+          message(
+            'md1',
+            3,
+            'nightly-e2e',
+            '**3 of 412 tests failed** in `checkout-flow`\n\n| Test | Error |\n| --- | --- |\n| pays with saved card | timeout 30 s |\n| applies coupon | 500 from /cart |\n| refunds | flaky |',
+            false,
+            'https://ci.acme.dev/e2e/2231'
+          ),
+          message('md2', 40, 'PAY-2305', 'PR #918 is green and ready for review:\n- adds `refund_reason`\n- backfills 12k rows', false, 'https://github.com/acme/payments-api/pull/918'),
+          ...cover.messages.slice(1, 3)
+        ],
+        unreadCount: 4
+      })
     }
   },
   // a shot stops at the window's height: with nothing above them, the wired points fit in one

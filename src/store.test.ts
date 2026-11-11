@@ -41,6 +41,12 @@ function sandbox(status = 'in-review') {
       execFile(process.execPath, [CLI, ...args], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_1', ...extra }) }, ran(resolve))
     )
   const cli = (...args: string[]) => cliWith({}, ...args)
+  /** The CLI with input on its stdin, as `agent-inbox notify <key> - <<'EOF'` runs it. */
+  const cliInput = (input: string, ...args: string[]) =>
+    new Promise<Run>((resolve) => {
+      const child = execFile(process.execPath, [CLI, ...args], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: orca.command, ORCA_TERMINAL_HANDLE: 'term_1' }) }, ran(resolve))
+      child.stdin?.end(input)
+    })
   /** The CLI as installed, through its launcher: agent-inbox.cmd on Windows, agent-inbox elsewhere. */
   const installed = (...args: string[]) =>
     new Promise<Run>((resolve) => {
@@ -49,7 +55,7 @@ function sandbox(status = 'in-review') {
       const line = [cliPath(home), ...args].map((a) => (/[\s"]/.test(a) ? `"${a}"` : a)).join(' ')
       execFile('cmd.exe', ['/d', '/s', '/c', `"${line}"`], { cwd: workspace, env: env(), windowsVerbatimArguments: true }, ran(resolve))
     })
-  return { home, workspace, config, orca, calls: orca.calls, cli, cliWith, installed, env }
+  return { home, workspace, config, orca, calls: orca.calls, cli, cliWith, cliInput, installed, env }
 }
 
 test('install puts the CLI with its launchers, config.json, the guide and the CLI reference where agents find them', () => {
@@ -158,6 +164,22 @@ test('notify, ask and resolve write the log and move the workspace on the board'
   ])
   // the lines are what the shell CLI of 0.1.2 wrote, field for field
   assert.match(readFileSync(config.logPath, 'utf8').split('\n')[1], /^\{"v":1,"ts":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","kind":"ask","key":"K-2","message":"pick A or B","url":null,"worktree":".+","terminal":"term_1"\}$/)
+})
+
+test('a message of - is Markdown read from stdin, and an ask comments its first line on the board', async () => {
+  const { home, config, workspace, calls, cliInput } = sandbox()
+  install(config, home, ROOT)
+  const markdown = '## Pick the **schema**\n\n- A: `v1`\n- B: `v2`'
+  const notified = await cliInput(`${markdown}\n\n`, 'notify', 'K-1', '-', 'https://example.com/1')
+  assert.equal(notified.code, 0)
+  assert.equal(notified.stdout, 'notify K-1: Pick the **schema**\n')
+  assert.equal((await cliInput(markdown, 'ask', 'K-2', '-')).code, 0)
+  const entries = readEntries(config.logPath)
+  assert.deepEqual(entries.map((e) => e.message), [markdown, markdown])
+  assert.equal(entries[0].url, 'https://example.com/1')
+  assert.deepEqual(calls(), [`worktree set --worktree path:${workspace} --workspace-status in-review --comment K-2: Pick the **schema** --unread --json`])
+  // nothing on stdin is no message
+  assert.equal((await cliInput('', 'notify', 'K-3', '-')).code, 2)
 })
 
 test('a worktree passed as Git Bash or Git write it on Windows is the path Orca has', { skip: !WINDOWS }, async () => {

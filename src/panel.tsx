@@ -11,6 +11,7 @@ import {
   env,
   IconButton,
   Link,
+  Markdown,
   plugin,
   read,
   RelativeTime,
@@ -34,6 +35,8 @@ const REFRESH_MS = 60_000
 /** The longest a request may wait: the worker reads the board, then gives the agent up to a minute to start. */
 const LAUNCH_TIMEOUT_MS = 120_000
 const REPO_URL = `https://github.com/${REPO}`
+/** The tallest a message or a reason grows, in pixels, before it scrolls. */
+const MESSAGE_HEIGHT = 240
 
 const inbox = atom<Inbox | null>(null)
 /** The last failed request or action, shown until the next one succeeds. */
@@ -106,6 +109,18 @@ async function addRecommended(p: WiredPoint): Promise<void> {
 }
 const removeRecommended = (p: WiredPoint) => act(plugin.request('inbox.removeRecommended', { id: p.id }), refresh)
 
+/**
+ * A message or a reason as the CLI sent it: GitHub-flavoured Markdown. A long one scrolls inside its own box, so
+ * one message never pushes the rest out of sight.
+ */
+function body(text: string) {
+  return (
+    <Box maxHeight={MESSAGE_HEIGHT} scroll="y" minWidth={0}>
+      <Markdown content={text} />
+    </Box>
+  )
+}
+
 /** Not through act: a star that fails is no problem of the inbox, so it stays in the footer. */
 async function star(): Promise<void> {
   set(starring, 'busy')
@@ -158,7 +173,7 @@ function waitingItem(w: WaitingItem) {
           </Text>
         )}
       </Row>
-      <Text size="sm">{w.reason ?? s.noReason}</Text>
+      {w.reason !== null ? body(w.reason) : <Text size="sm">{s.noReason}</Text>}
       <Row gap="xs" align="center" wrap>
         <Button size="sm" variant="solid" tone="accent" icon="terminal" tooltip={s.goToTip} onPress={() => goTo(w)}>
           {s.goTo}
@@ -189,7 +204,8 @@ function projectGroup(group: { repo: string; items: WaitingItem[] }) {
 }
 
 /**
- * Unread: the key in bold, Open link filled and a Mark read button; read: the whole line muted. Open link sits on
+ * The key, then the message as Markdown. Unread: the key in bold, Open link filled and a Mark read button; read:
+ * the key muted. Open link sits on
  * the right with Mark read, not after the time: Orca opens a link only from a control that has not moved since
  * it last looked, and the time changes width as it counts, every second in the first minute.
  */
@@ -197,12 +213,10 @@ function messageRow(m: InboxMessage) {
   const s = t()
   return (
     <Stack gap="xs">
-      <Text size="sm" muted={m.read}>
-        <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
-          {m.key}
-        </Text>{' '}
-        {m.text}
+      <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
+        {m.key}
       </Text>
+      {body(m.text)}
       <Row justify="between" align="center" gap="sm">
         <Text muted size="xs">
           <RelativeTime at={m.at} />
@@ -323,9 +337,9 @@ function messagesSection(data: Inbox) {
 }
 
 /**
- * Where the point shows as a badge, then when it sends; under it the key, the place that sends, and Remove. A
- * recommended point shows in the panel's language, and Remove takes it out at once, since the plugin wires it;
- * the others an agent takes out of the workflow.
+ * Where the point shows as a badge, then when it sends; under it the key, the place that sends, Edit and Remove. A
+ * recommended point shows in the panel's language, has no Edit, since the plugin wires it as it is, and Remove
+ * takes it out at once; the others an agent changes or takes out of the workflow.
  */
 function pointRow(p: WiredPoint, guide: string) {
   const s = t()
@@ -341,15 +355,22 @@ function pointRow(p: WiredPoint, guide: string) {
         <Text muted size="xs">
           {s.pointDetail(shown.key, shown.wiredIn)}
         </Text>
-        <Button
-          size="xs"
-          variant="outline"
-          icon="delete"
-          tooltip={own ? s.removeRecommendedTip : s.removePointTip}
-          onPress={() => (own ? removeRecommended(p) : launch(s.removePointPrompt(guide, p)))}
-        >
-          {s.removePoint}
-        </Button>
+        <Row gap="xs" align="center">
+          {!own && (
+            <Button size="xs" variant="outline" icon="edit" tooltip={s.editPointTip} onPress={() => launch(s.editPointPrompt(guide, p))}>
+              {s.editPoint}
+            </Button>
+          )}
+          <Button
+            size="xs"
+            variant="outline"
+            icon="delete"
+            tooltip={own ? s.removeRecommendedTip : s.removePointTip}
+            onPress={() => (own ? removeRecommended(p) : launch(s.removePointPrompt(guide, p)))}
+          >
+            {s.removePoint}
+          </Button>
+        </Row>
       </Row>
     </Stack>
   )
