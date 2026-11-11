@@ -362,10 +362,12 @@ function pointRow(p: WiredPoint, guide: string) {
         <Text size="sm">{shown.when}</Text>
       </Row>
       <Row justify="between" align="center" gap="sm">
-        <Text muted size="xs">
-          {s.pointDetail(shown.key, shown.wiredIn)}
-        </Text>
-        <Row gap="xs" align="center">
+        <Box grow minWidth={0}>
+          <Text muted size="xs">
+            {s.pointDetail(shown.key, shown.wiredIn)}
+          </Text>
+        </Box>
+        <Box direction="row" gap="xs" align="center" shrink={false}>
           {!own && (
             <Button size="xs" variant="outline" icon="edit" tooltip={s.editPointTip} onPress={() => launch(s.editPointPrompt(guide, p))}>
               {s.editPoint}
@@ -380,7 +382,7 @@ function pointRow(p: WiredPoint, guide: string) {
           >
             {s.removePoint}
           </Button>
-        </Row>
+        </Box>
       </Row>
     </Stack>
   )
