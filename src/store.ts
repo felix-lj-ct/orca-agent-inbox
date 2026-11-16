@@ -3,7 +3,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { configDir, type InboxConfig, renderConfig } from './config'
-import { type Entry, type Hold, keepLines, parseLog } from './log'
+import { type Entry, keepLines, parseLog } from './log'
 import { parsePoints, pointsPath } from './points'
 import type { Setup, WiredPoint } from './protocol'
 
@@ -168,11 +168,11 @@ function withLock<T>(logPath: string, fn: () => T): T | undefined {
 }
 
 /** Drops the log lines past the retention window (see keepLines); returns how many went. */
-export function prune(config: InboxConfig, now = Date.now(), hold?: Hold): number {
+export function prune(config: InboxConfig, now = Date.now()): number {
   if (!existsSync(config.logPath)) return 0
   const removed = withLock(config.logPath, () => {
     const lines = readFileSync(config.logPath, 'utf8').split('\n').filter((line) => line.trim())
-    const kept = keepLines(lines, now, config.retentionDays, hold)
+    const kept = keepLines(lines, now, config.retentionDays)
     if (kept.length === lines.length) return 0
     const tmp = `${config.logPath}.tmp-${process.pid}`
     writeFileSync(tmp, kept.map((line) => `${line}\n`).join(''))

@@ -7,13 +7,14 @@ const inbox = (language: Inbox['language'], waiting = true): Inbox => ({
   waiting: waiting
     ? [{ path: '/w/a', key: 'P-1', repo: 'app', reason: 'pick A or B', since: Date.now() - 60_000, url: null, terminal: 'term_1', resumed: false }]
     : [],
-  messages: [{ id: 'm1', at: Date.now() - 3_600_000, key: 'BUILD', text: 'nightly build failed', url: 'https://ci/1', read: false }],
+  messages: [{ id: 'm1', at: Date.now() - 3_600_000, key: 'BUILD', text: 'nightly build failed', url: 'https://ci/1', point: 'build', read: false }],
   unreadCount: 1,
   readCount: 0,
   points: [],
   retentionDays: 7,
   keepMessagesUntilRead: false,
   showRecommendations: true,
+  showPointSearch: true,
   language,
   setup: { cli: '/h/.config/agent-inbox/bin/agent-inbox', guide: '/h/.config/agent-inbox/agent-guide.md', log: '/h/inbox.jsonl' },
   setupPending: false,
@@ -47,6 +48,7 @@ test('shows what waits and the messages, and resolves', async () => {
     assert.ok(view.find({ text: /^BUILD nightly build failed/ }))
     assert.ok(view.find({ text: /^Messages \(1\)/ }))
     assert.ok(view.find({ text: /^Waiting on you \(1\)/ }))
+    assert.ok(view.find({ text: /point build/ }))
     assert.ok(view.find({ type: 'Button', text: 'Star on GitHub' }))
 
     await view.press({ text: 'Mark handled' })
@@ -55,6 +57,107 @@ test('shows what waits and the messages, and resolves', async () => {
     assert.ok(view.find({ text: /^Waiting on you \(0\)/ }))
     assert.deepEqual(view.errors, [])
     assert.deepEqual(view.refusals, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('the Messages search asks the worker for the point text after a pause', async () => {
+  const asked: unknown[] = []
+  const all: InboxMessage[] = [
+    { id: 'a', at: Date.now() - 1_000, key: 'BUILD', text: 'build failed', url: null, point: 'build', read: false },
+    { id: 'b', at: Date.now() - 2_000, key: 'QA', text: 'report posted', url: null, point: 'qa-report', read: false },
+    { id: 'c', at: Date.now() - 3_000, key: 'PLAIN', text: 'no point', url: null, point: null, read: false }
+  ]
+  const host = mockHost({
+    requests: {
+      'inbox.list': (input) => {
+        asked.push(input)
+        const point = ((input as { point?: string }).point ?? '').toLowerCase()
+        const messages = point === '' ? all : all.filter((m) => m.point !== null && m.point.toLowerCase().includes(point))
+        return withMessages(messages)
+      }
+    }
+  })
+  const view = await mount(panel, { host })
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 300))
+  try {
+    assert.ok(view.find({ text: 'BUILD' }))
+    assert.ok(view.find({ text: 'QA' }))
+    assert.ok(view.find({ text: 'PLAIN' }))
+    await view.type({ type: 'Input', label: 'Search messages by point' }, 'bu')
+    await pause()
+    await view.settled()
+    assert.deepEqual(asked.at(-1), { unread: 20, read: 20, point: 'bu' })
+    assert.ok(view.find({ text: 'BUILD' }))
+    assert.equal(view.find({ text: 'QA' }), null)
+    // the worker matches in any case
+    await view.type({ type: 'Input', label: 'Search messages by point' }, 'BUILD', { replace: true })
+    await pause()
+    await view.settled()
+    assert.deepEqual(asked.at(-1), { unread: 20, read: 20, point: 'BUILD' })
+    assert.ok(view.find({ text: 'BUILD' }))
+    assert.equal(view.find({ text: 'QA' }), null)
+    assert.deepEqual(view.errors, [])
+    assert.deepEqual(view.warnings, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('the Wired points search narrows the list as the person types', async () => {
+  const point = (id: string, when: string) => ({ id, kind: 'notify' as const, key: 'K', when, wiredIn: 'script.sh' })
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => ({
+        ...inbox('en', false),
+        points: [point('build-failed', 'the build failed'), point('qa-report', 'the report posted')]
+      })
+    }
+  })
+  const view = await mount(panel, { host })
+  try {
+    await view.toggle({ type: 'Collapsible', label: 'Wired points (2)' })
+    assert.ok(view.find({ text: 'the build failed' }))
+    assert.ok(view.find({ text: 'the report posted' }))
+    await view.type({ type: 'Input', label: 'Search wired points' }, 'qa')
+    assert.equal(view.find({ text: 'the build failed' }), null)
+    assert.ok(view.find({ text: 'the report posted' }))
+    await view.type({ type: 'Input', label: 'Search wired points' }, 'build', { replace: true })
+    assert.ok(view.find({ text: 'the build failed' }))
+    assert.equal(view.find({ text: 'the report posted' }), null)
+    // a word from the description or the place matches too
+    await view.type({ type: 'Input', label: 'Search wired points' }, 'posted', { replace: true })
+    assert.ok(view.find({ text: 'the report posted' }))
+    await view.type({ type: 'Input', label: 'Search wired points' }, 'zzz', { replace: true })
+    assert.ok(view.find({ text: 'No points match' }))
+    assert.deepEqual(view.errors, [])
+    assert.deepEqual(view.warnings, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('the settings can hide both point searches; the lists show everything', async () => {
+  const point = (id: string, when: string) => ({ id, kind: 'notify' as const, key: 'K', when, wiredIn: 'script.sh' })
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => ({
+        ...inbox('en', false),
+        showPointSearch: false,
+        points: [point('build-failed', 'the build failed'), point('qa-report', 'the report posted')]
+      })
+    }
+  })
+  const view = await mount(panel, { host, persisted: { plugin: { pointsOpen: true } } })
+  try {
+    assert.equal(view.find({ type: 'Input', label: 'Search messages by point' }), null)
+    assert.equal(view.find({ type: 'Input', label: 'Search wired points' }), null)
+    assert.ok(view.find({ text: 'nightly build failed' }))
+    assert.ok(view.find({ text: 'the build failed' }))
+    assert.ok(view.find({ text: 'the report posted' }))
+    assert.deepEqual(view.errors, [])
+    assert.deepEqual(view.warnings, [])
   } finally {
     await view.unmount()
   }
@@ -71,6 +174,7 @@ test('speaks Chinese when set, and explains a workspace without a terminal', asy
   try {
     assert.ok(view.find({ text: /^等你处理（1）/ }))
     assert.ok(view.find({ type: 'Collapsible', label: '消息（1）' }))
+    assert.ok(view.find({ text: /接入点：build/ }))
     assert.ok(view.find({ type: 'Text', text: '近 7 天' }))
     assert.ok(view.find({ type: 'Button', text: '在 GitHub 点 Star' }))
     await view.press({ text: '去处理' })
@@ -87,7 +191,7 @@ test('messages and reasons are Markdown', async () => {
       'inbox.list': () => ({
         ...inbox('en'),
         waiting: [{ ...inbox('en').waiting[0], reason: 'Pick one:\n1. `A`\n2. `B`' }],
-        messages: [{ id: 'm1', at: Date.now(), key: 'BUILD', text, url: null, read: false }]
+        messages: [{ id: 'm1', at: Date.now(), key: 'BUILD', text, url: null, point: null, read: false }]
       })
     }
   })
@@ -103,10 +207,66 @@ test('messages and reasons are Markdown', async () => {
   }
 })
 
+test('each message reads as one block, like an ask', async () => {
+  const message = (id: string, read: boolean): InboxMessage => ({ id, at: Date.now() - 60_000, key: id.toUpperCase(), text: `note ${id}`, url: null, point: null, read })
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => ({
+        ...withMessages([message('a', false), message('b', false), message('c', true)]),
+        showRecommendations: false
+      })
+    }
+  })
+  const view = await mount(panel, { host })
+  try {
+    // a block each, the same border and radius as an ask
+    const tiles = () => view.findAll({ type: 'Box' }).filter((e) => e.props.border === 'neutral' && e.props.radius === 'md')
+    assert.equal(tiles().length, 2)
+    await view.select({ type: 'Tabs' }, 'read')
+    assert.equal(tiles().length, 1)
+    assert.ok(view.find({ text: /^C note c/ }))
+    assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('each wired point reads as one block, like a message', async () => {
+  const point = (id: string, when: string) => ({ id, kind: 'notify' as const, key: 'K', when, wiredIn: 'script.sh' })
+  const host = mockHost({
+    requests: {
+      'inbox.list': () => ({
+        ...inbox('en', false),
+        messages: [],
+        unreadCount: 0,
+        readCount: 0,
+        showRecommendations: false,
+        points: [point('build-failed', 'the build failed'), point('qa-report', 'the report posted')]
+      })
+    }
+  })
+  const view = await mount(panel, { host, persisted: { plugin: { pointsOpen: true } } })
+  try {
+    // a block each, the same border and radius as a message
+    for (const id of ['build-failed', 'qa-report']) assert.equal(view.find({ testId: `point:${id}` })?.props.border, 'neutral')
+    assert.equal(view.find({ testId: 'point:qa-report' })?.props.radius, 'md')
+    assert.ok(view.find({ text: 'the build failed' }))
+    assert.ok(view.find({ text: 'the report posted' }))
+    assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
 test('a long message shows its start, and Show more shows it whole until Show less', async () => {
   const text = Array.from({ length: 10 }, (_, i) => `- line ${i + 1}`).join('\n')
   const host = mockHost({
-    requests: { 'inbox.list': () => ({ ...inbox('en', false), messages: [{ id: 'm1', at: Date.now(), key: 'LONG', text, url: null, read: false }] }) }
+    requests: {
+      'inbox.list': () => ({
+        ...inbox('en', false),
+        messages: [{ id: 'm1', at: Date.now(), key: 'LONG', text, url: null, point: null, read: false }]
+      })
+    }
   })
   const view = await mount(panel, { host })
   const shown = () => String(view.find({ type: 'Markdown' })?.props.content)
@@ -125,7 +285,7 @@ test('a long message shows its start, and Show more shows it whole until Show le
 test('asks the worker for the newest messages, and Show more asks for more', async () => {
   const all: InboxMessage[] = Array.from({ length: 45 }, (_, i) => {
     const n = String(i + 1).padStart(2, '0')
-    return { id: `m${n}`, at: Date.now() - (i + 1) * 60_000, key: 'K', text: `note ${n}`, url: null, read: false }
+    return { id: `m${n}`, at: Date.now() - (i + 1) * 60_000, key: 'K', text: `note ${n}`, url: null, point: null, read: false }
   })
   const asked: unknown[] = []
   const host = mockHost({
@@ -186,7 +346,7 @@ test('the setup task sends the person to Add a point and goes once handled', asy
 
 test('marks one or all messages read, and keeps the read ones under the Read tab', async () => {
   const marked: unknown[] = []
-  const message = (id: string, minutesAgo: number, read: boolean) => ({ id, at: Date.now() - minutesAgo * 60_000, key: id.toUpperCase(), text: `note ${id}`, url: null, read })
+  const message = (id: string, minutesAgo: number, read: boolean) => ({ id, at: Date.now() - minutesAgo * 60_000, key: id.toUpperCase(), text: `note ${id}`, url: null, point: null, read })
   let messages = [message('a', 1, false), message('b', 2, false), message('c', 3, false), message('d', 4, true)]
   const newestUnreadAfterA = messages[1].at
   const host = mockHost({
@@ -242,7 +402,7 @@ test('marks one or all messages read, and keeps the read ones under the Read tab
 
 test('a message counts as read once its link opened, and a link Orca refuses says why', async () => {
   const marked: unknown[] = []
-  const message = (id: string, url: string) => ({ id, at: Date.now() - 60_000, key: id.toUpperCase(), text: `note ${id}`, url, read: false })
+  const message = (id: string, url: string) => ({ id, at: Date.now() - 60_000, key: id.toUpperCase(), text: `note ${id}`, url, point: null, read: false })
   const host = mockHost({
     results: {
       'shell.openExternal': ({ url }: { url: string }) => {
@@ -364,12 +524,14 @@ test('lists the wired points, asks first, and says how they get there when there
     assert.equal(view.find({ text: 'a design decision' }), null)
     await view.toggle({ type: 'Collapsible', label: 'Wired points (2)' })
     assert.equal(view.persisted.plugin.pointsOpen, true)
-    assert.deepEqual(view.findAll({ type: 'Badge' }).map((e) => e.text), ['Waiting on you', 'Message'])
+    assert.deepEqual(view.findAll({ type: 'Badge' }).map((e) => e.text), ['Waiting on you', 'design', 'Message', 'build'])
     assert.ok(view.find({ text: 'a design decision' }))
     assert.equal(view.findAll({ text: 'key <ticket> · CLAUDE.md (A)' }).length, 2)
 
     current = { ...current, points: [] }
-    await view.press({ label: 'Refresh' })
+    await view.post('inbox.changed', { at: Date.now() })
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    await view.settled()
     assert.ok(view.find({ text: /^Wired points \(0\)/ }))
     assert.ok(view.find({ text: /^No points recorded yet/ }))
     assert.deepEqual(view.errors, [])
@@ -400,7 +562,7 @@ test('Add a point, Align, Edit and Remove start an agent with a prompt, and say 
     await view.press({ text: 'Remove' })
     assert.deepEqual(launched, [
       'Read /h/.config/agent-inbox/agent-guide.md and add one Agent Inbox point to my workflow: ask me what should send, wire it where it belongs, and record it with agent-inbox point add.',
-      'Read /h/.config/agent-inbox/agent-guide.md and align my Agent Inbox points: compare the recorded points with the agent-inbox calls in my workflow, show me the differences and the point add and point remove commands that fix the records, and run them once I agree. Change no workflow files.',
+      "Read /h/.config/agent-inbox/agent-guide.md and align my Agent Inbox points: make the records match the calls in my workflow, including each notify's --point, once I agree.",
       'Read /h/.config/agent-inbox/agent-guide.md and change the Agent Inbox point build-failed (notify, key BUILD; the build failed; wired in build.sh): find its call in my workflow, show it to me and ask me how to change it, such as when it sends, its key, its message or where it is wired. Then change the call and record it again with agent-inbox point add build-failed.',
       'Read /h/.config/agent-inbox/agent-guide.md and remove the Agent Inbox point build-failed (the build failed; wired in build.sh): take its call out of my workflow and run agent-inbox point remove build-failed.'
     ])
@@ -501,6 +663,7 @@ test('a recommended point is added with one press and then shows under Wired poi
     // Wired points opened on the record, in the panel's words
     assert.equal(view.persisted.plugin.pointsOpen, true)
     assert.ok(view.find({ text: 'An agent asks you with AskUserQuestion; it goes once you answer' }))
+    assert.ok(view.find({ type: 'Badge', text: 'builtin.ask-question' }))
     assert.ok(view.find({ text: 'key <ticket or folder> · the Agent Inbox plugin' }))
 
     // the plugin wires it as it is: no Edit, and Remove takes it out without an agent
@@ -523,6 +686,7 @@ test('the settings hide Recommended points, while an added one stays under Wired
     assert.equal(view.find({ type: 'Collapsible', label: /^推荐接入点/ }), null)
     assert.ok(view.find({ type: 'Collapsible', label: '接入点（1）' }))
     assert.ok(view.find({ text: 'agent 用 AskUserQuestion 向你提问；回答后自动移走' }))
+    assert.ok(view.find({ type: 'Badge', text: 'builtin.ask-question' }))
     assert.ok(view.find({ text: 'key：<ticket 或目录名> · Agent Inbox 插件' }))
     assert.ok(view.find({ type: 'Button', text: '新增' }))
     assert.equal(view.find({ type: 'Button', text: '修改' }), null)

@@ -22,7 +22,7 @@ plugin is installed.
 
 | Command | The person sees | Runs from | Needs Orca running |
 | --- | --- | --- | --- |
-| `notify <key> "<message>" [<url>]` | An unread message under Messages, rendered as Markdown, with **Open link** when you give a URL | Anywhere | No |
+| `notify [--point <id>] <key> "<message>" [<url>]` | An unread message under Messages, rendered as Markdown, with **Open link** when you give a URL and the point that sent it when you name one | Anywhere | No |
 | `ask [--worktree <path>] <key> "<message>" [<url>]` | A card under Waiting on you with the message rendered as Markdown, and **Open link** when you give a URL; the workspace moves to the waiting column with `<key>: <the first line of the message>` as its comment and an unread dot | Inside an Orca workspace, or anywhere with `--worktree` | Yes |
 | `resolve [--worktree <path>] <key>` | The card goes (or, if the person keeps asks until they mark them handled, says the agent resumed); the workspace moves back to the resolved column, if it is still in the waiting column | The workspace of the `ask` | Yes |
 | `test [--worktree <path>]` | A TEST card under Waiting on you; `resolve TEST` removes it | An Orca workspace | Yes |
@@ -66,6 +66,9 @@ plugin is installed.
   - Opening the link of a message marks it read, unless the person keeps messages unread until marked read (a
     setting of the plugin).
   - An empty `<url>` (`""`) is the same as none.
+- **`--point <id>`** on `notify` names the point that sends, as `point add` recorded it. The message shows it
+  after the time, so the person sees which point sent it. Put it right after the command. The id need not be
+  recorded, and without it the message shows no point. The other commands take no `--point`.
 - **`--worktree <path>`** names the Orca workspace of `ask`, `resolve` and `test`. Put it right after the
   command. Without it, the CLI takes the Git top level of the current directory; outside a Git repository,
   `ask`, `resolve` and `test` then fail with exit code 2.
@@ -75,7 +78,7 @@ plugin is installed.
 - A workspace has one waiting state. A later `ask` in the same workspace replaces the message and the link; one
   `resolve` clears it, whatever key it names.
 - `resolve` leaves alone a workspace that the person already moved out of the waiting column.
-- The waiting and resolved columns are settings of the plugin; by default `in-review` and `in-progress`.
+- `ask` moves the workspace to the board's `in-review` column; `resolve` moves it back to `in-progress`.
 - An `ask` needs an Orca workspace that waits for the person, and **Go to agent** takes them to the terminal
   that asked. Where there is none (a cron job, CI), send a `notify` that says what to do.
 
@@ -89,6 +92,8 @@ nothing itself.
 - `<key>` is the key that the point sends: a placeholder such as `<ticket>` when it varies.
 - `<when>` says when it sends; `<wired in>` names the file, script, hook or automation that sends it.
 - `point list` prints one JSON object per line, with `id`, `kind`, `key`, `when`, `wiredIn` and `ts`.
+- A `notify` call of a recorded point passes `--point <id>` with the record's id, so each message it sends
+  shows which point sent it.
 
 ## In a script
 
@@ -100,6 +105,9 @@ A failed message must not fail the job. Ignore the exit code of the CLI:
 | PowerShell | `try { ~/.config/agent-inbox/bin/agent-inbox notify <key> "<message>" } catch {}`: `\|\| true` does not work there |
 | A `.bat` or `.cmd` script | `call "%USERPROFILE%\.config\agent-inbox\bin\agent-inbox.cmd" notify <key> "<message>" \|\| ver >nul` |
 | Another language | Run the same command and ignore its exit code |
+
+A `notify` of a recorded point also passes `--point <id>` before the key, so its messages show which point sent
+them.
 
 PowerShell and cmd pass the arguments through cmd, which splits an argument without spaces at `&`, `|`, `<`, `>`
 or `^`, and cuts one at a line break. In PowerShell, quote such an argument twice, as in
@@ -121,5 +129,5 @@ When a command works, the CLI prints one line, such as `notify <key>: <the first
 ## The log
 
 Each `notify`, `ask` and `resolve` is a line in a plain text file (`agent-inbox where` prints its path): send no
-secrets, in the message or in the link. The plugin removes the lines older than the retention window (by default
-7 days); an ask that still waits on the person stays.
+secrets, in the message or in the link. The plugin deletes the lines older than the retention window (by default
+7 days, at most 30), asks included: a workspace still waiting stays on the board, without its old reason and time.

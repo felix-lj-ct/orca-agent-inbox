@@ -6,11 +6,15 @@ An [Orca](https://onorca.dev) plugin: one sidebar panel for what your agents and
 
 - **Waiting on you**: workspaces an agent parked on the board for your decision or approval, with the reason.
   **Go to agent** jumps to the terminal that asked; **Mark handled** moves the workspace back.
-- **Messages**: what you should know (a long job failed, a credential expired), kept 7 days by default.
-  Messages and reasons are Markdown: a first line that says it all, then lists, `code`, tables or links when
-  they help.
-- **Wired points**: the places in your workflow that send here. **Add a point**, **Align**, **Edit** and
-  **Remove** have your agent make the change once you agree; **Edit** asks you how to change the point first.
+- **Messages**: what you should know (a long job failed, a credential expired), kept 7 days by default, at most
+  30. Messages and reasons are Markdown: a first line that says it all, then lists, `code`, tables or links when
+  they help. A message says which **Wired point** sent it when its call names one (`notify --point <id>`);
+  the search box above the list filters by point id.
+- **Wired points**: the places in your workflow that send here, each with its id. **Add a point**, **Align**,
+  **Edit** and **Remove** have your agent make the change once you agree; **Edit** asks you how to change the point first.
+  Run **Align** about every two weeks, or when a point looks out of date: it keeps **Wired points** to the calls
+  that exist today and adds each `notify` call's `--point`, which labels its messages. A search box filters the
+  list by point.
 - **Recommended points**: points Agent Inbox wires itself, added with one press, such as the questions your
   agents ask with AskUserQuestion. See [Recommended points](#recommended-points).
 
@@ -116,14 +120,15 @@ from the network. To hide the section, turn off **Show recommended points** in t
 ## The CLI
 
 ```sh
-agent-inbox notify <key> "<message>" [<url>]   # a line under Messages
-agent-inbox ask <key> "<message>" [<url>]      # this workspace waits on you
-agent-inbox resolve <key>                      # it no longer does
-agent-inbox hook                               # what an agent needs to know to send here
+agent-inbox notify [--point <id>] <key> "<message>" [<url>]   # a line under Messages
+agent-inbox ask <key> "<message>" [<url>]                     # this workspace waits on you
+agent-inbox resolve <key>                                     # it no longer does
+agent-inbox hook                                              # what an agent needs to know to send here
 ```
 
 `<key>` names the work: a ticket id, a job name. `<message>` is Markdown, whose first line says it all; pass `-`
-to read a message of several lines from stdin:
+to read a message of several lines from stdin. `--point <id>` names the recorded point that sends, which the
+message then shows after its time; leave it out and the message shows no point.
 
 ```sh
 agent-inbox notify nightly-e2e - "$REPORT_URL" <<'EOF'
@@ -177,8 +182,20 @@ mkdir -p ~/.config && ln -sfn "$(wslpath -u "$(cmd.exe /c 'echo %USERPROFILE%' 2
 
 ## Settings
 
-Settings → Plugins → Agent Inbox: the log file, how many days to keep messages (7), the board columns that `ask`
-moves a workspace to and `resolve` moves it back to (`in-review`, `in-progress`), and the language.
+Settings → Plugins → Agent Inbox: the log file, how many days to keep messages (7, at most 30), the points whose
+messages become read on their own, and the language. **Mark messages read after (minutes)** takes point ids and
+their minutes, one entry per line or comma separated, for example:
+
+```text
+nightly-e2e: 5
+qa-report: 30
+deploy-watch: 120
+```
+
+The same as `nightly-e2e: 5, qa-report: 30, deploy-watch: 120` on one line. A message that point sent counts as
+read once those minutes pass, without pressing **Mark read**; a point not listed never becomes read on its own. An `ask` moves the workspace to Orca's `in-review` column and `resolve` moves
+it back to `in-progress`. Lines past the retention window are deleted from the log, asks included: a workspace
+still in `in-review` stays under **Waiting on you**, without its old reason and time.
 
 Two switches, both off by default, leave it to you to say when something is done:
 
@@ -190,6 +207,9 @@ Two switches, both off by default, leave it to you to say when something is done
 
 **Show recommended points**, on by default, shows [Recommended points](#recommended-points) after **Wired
 points**. Off, the section goes; a recommended point you added keeps working and stays under **Wired points**.
+
+**Show point search**, on by default, shows a search box above **Messages** (by point id) and one above
+**Wired points**. Off, both boxes go and every message and point shows.
 
 ## Permissions
 

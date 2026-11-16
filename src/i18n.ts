@@ -25,6 +25,8 @@ const en = {
   /** before the time of an ask kept until handled that the agent resolved */
   resumed: 'Agent resumed',
   noReason: '(no reason given)',
+  /** after a message's time: the point its call named */
+  messagePoint: (id: string) => `point ${id}`,
   noTerminal: 'This workspace has no open terminal; open it from the sidebar',
   /** n: the unread ones */
   messages: (n: number) => `Messages (${n})`,
@@ -34,6 +36,11 @@ const en = {
   readTab: (n: number) => `Read (${n})`,
   noUnread: 'No unread messages',
   noRead: 'Nothing read yet',
+  filterMessages: 'Search messages by point',
+  filterMessagesPlaceholder: 'Search by point (run Align first)',
+  filterPoints: 'Search wired points',
+  filterPointsPlaceholder: 'Search points',
+  noMatchingPoints: 'No points match',
   markRead: 'Mark read',
   markAllRead: 'Mark all read',
   showMore: (n: number) => `Show more (${n} more)`,
@@ -54,7 +61,8 @@ const en = {
   removePoint: 'Remove',
   removePointTip: 'Start your default agent in the selected workspace to take this point out of your workflow and its record',
   alignPoints: 'Align',
-  alignPointsTip: 'Start your default agent in the selected workspace to check the records against the calls in your workflow; it changes only the records, once you agree',
+  alignPointsTip:
+    'Run this about every two weeks, or when a point looks out of date: your agent brings the records in line with the calls and adds their --point, once you agree',
   noWorkspace: 'Select a workspace in Orca first; the agent starts there',
   recommendations: (n: number) => `Recommended points (${n})`,
   recommendationsNote: 'Picked from what people wire',
@@ -83,8 +91,7 @@ const en = {
   removePointPrompt: (guide: string, p: WiredPoint) =>
     `Read ${guide} and remove the Agent Inbox point ${p.id} (${p.when}; wired in ${p.wiredIn}): take its call out of my workflow and run agent-inbox point remove ${p.id}.`,
   alignPointsPrompt: (guide: string) =>
-    `Read ${guide} and align my Agent Inbox points: compare the recorded points with the agent-inbox calls in my workflow, show me the differences and the point add and point remove commands that fix the records, and run them once I agree. Change no workflow files.`,
-  refresh: 'Refresh',
+    `Read ${guide} and align my Agent Inbox points: make the records match the calls in my workflow, including each notify's --point, once I agree.`,
   loading: 'Loading',
   loadFailed: (e: string) => `Could not load: ${e}`,
   actionFailed: 'That did not work',
@@ -116,6 +123,7 @@ const zhCN: Strings = {
   resolveResumedTip: '从列表里移除；agent 已经继续了',
   resumed: 'agent 已继续',
   noReason: '（没有写原因）',
+  messagePoint: (id) => `接入点：${id}`,
   noTerminal: '这个工作区没有打开的终端，请从侧边栏打开它',
   messages: (n) => `消息（${n}）`,
   lastDays: (d) => `近 ${d} 天`,
@@ -124,6 +132,11 @@ const zhCN: Strings = {
   readTab: (n) => `已读（${n}）`,
   noUnread: '没有未读消息',
   noRead: '还没有已读消息',
+  filterMessages: '按接入点搜索消息',
+  filterMessagesPlaceholder: '按接入点搜索（需先执行接入点对齐）',
+  filterPoints: '搜索接入点',
+  filterPointsPlaceholder: '搜索接入点',
+  noMatchingPoints: '没有匹配的接入点',
   markRead: '标为已读',
   markAllRead: '全部标为已读',
   showMore: (n) => `显示更多（还有 ${n} 条）`,
@@ -143,7 +156,7 @@ const zhCN: Strings = {
   removePoint: '移除',
   removePointTip: '在当前选中的工作区打开默认 agent，把这个点从工作流和登记表里去掉',
   alignPoints: '对齐',
-  alignPointsTip: '在当前选中的工作区打开默认 agent，把登记表和工作流里的实际调用逐个对照；只改登记表，并且要你确认',
+  alignPointsTip: '每两周左右对齐一次，或觉得接入点有出入时对齐：agent 把登记和调用对齐并补上 --point，改前要你确认',
   noWorkspace: '先在 Orca 里选中一个工作区，agent 会在那里打开',
   recommendations: (n) => `推荐接入点（${n}）`,
   recommendationsNote: '从大家的接入里挑选',
@@ -169,8 +182,7 @@ const zhCN: Strings = {
   removePointPrompt: (guide, p) =>
     `读 ${guide}，移除 Agent Inbox 接入点 ${p.id}（${p.when}；接在 ${p.wiredIn}）：把它的调用从我的工作流里去掉，再运行 agent-inbox point remove ${p.id}。`,
   alignPointsPrompt: (guide) =>
-    `读 ${guide}，对齐 Agent Inbox 接入点：把登记的接入点和工作流里实际的 agent-inbox 调用逐个对照，列出差异和修正登记要运行的 point add / point remove，我确认后再执行。不要改工作流文件。`,
-  refresh: '刷新',
+    `读 ${guide}，对齐 Agent Inbox 接入点：让登记与工作流里实际的调用一致，包括补上每个 notify 的 --point；我确认后再改。`,
   loading: '读取中',
   loadFailed: (e) => `读取失败：${e}`,
   actionFailed: '操作失败',

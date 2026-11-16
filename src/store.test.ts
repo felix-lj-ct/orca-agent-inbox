@@ -162,8 +162,24 @@ test('notify, ask and resolve write the log and move the workspace on the board'
     `worktree show --worktree path:${workspace} --json`,
     `worktree set --worktree path:${workspace} --workspace-status in-progress --comment  --json`
   ])
-  // the lines are what the shell CLI of 0.1.2 wrote, field for field
-  assert.match(readFileSync(config.logPath, 'utf8').split('\n')[1], /^\{"v":1,"ts":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","kind":"ask","key":"K-2","message":"pick A or B","url":null,"worktree":".+","terminal":"term_1"\}$/)
+  // the fields and their order, as the shell CLI of 0.1.2 wrote them, plus the point
+  assert.match(
+    readFileSync(config.logPath, 'utf8').split('\n')[1],
+    /^\{"v":1,"ts":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ","kind":"ask","key":"K-2","message":"pick A or B","url":null,"worktree":".+","terminal":"term_1","point":null\}$/
+  )
+})
+
+test('notify --point says which point sent the message; other commands take no point', async () => {
+  const { home, config, calls, cli } = sandbox()
+  install(config, home, ROOT)
+  assert.equal((await cli('notify', '--point', 'nightly-build', 'K-1', 'build failed')).code, 0)
+  assert.equal((await cli('notify', 'K-2', 'build passed')).code, 0)
+  const entries = readEntries(config.logPath)
+  assert.deepEqual(entries.map((e) => [e.key, e.point]), [['K-1', 'nightly-build'], ['K-2', null]])
+  // the id is the one `point add` takes, and only a message takes one
+  assert.equal((await cli('notify', '--point', 'bad id', 'K-3', 'x')).code, 2)
+  assert.equal((await cli('ask', '--point', 'build', 'K-4', 'x')).code, 2)
+  assert.deepEqual(calls(), [])
 })
 
 test('a message of - is Markdown read from stdin, and an ask comments its first line on the board', async () => {
@@ -325,7 +341,7 @@ test('usage errors exit 2 and a missing orca CLI exits 3 without logging the ask
   install(config, home, ROOT)
   const notify = await cli('notify', 'K-1')
   assert.equal(notify.code, 2)
-  assert.match(notify.stderr, /agent-inbox notify <key> <message>/)
+  assert.match(notify.stderr, /agent-inbox notify \[--point <id>\] <key> <message>/)
   assert.equal((await cli('shout', 'K-1', 'x')).code, 2)
   const missing = await new Promise<Run>((resolve) =>
     execFile(process.execPath, [CLI, 'ask', 'K-1', 'x'], { cwd: workspace, env: env({ AGENT_INBOX_ORCA: join(home, 'nope') }) }, ran(resolve))
@@ -335,15 +351,15 @@ test('usage errors exit 2 and a missing orca CLI exits 3 without logging the ask
   assert.equal(readEntries(config.logPath).length, 0)
 })
 
-test('prune drops old lines and keeps open asks; the CLI waits for a prune holding the lock', async () => {
+test('prune deletes the lines past the window, an open ask included; the CLI waits for a prune holding the lock', async () => {
   const { home, config, workspace, cli } = sandbox()
   install(config, home, ROOT)
   const now = Date.now()
   const line = (daysAgo: number, kind: string, key: string, wt: string | null) =>
     JSON.stringify({ v: 1, ts: new Date(now - daysAgo * DAY).toISOString(), kind, key, message: key, url: null, worktree: wt, terminal: null })
   writeFileSync(config.logPath, [line(40, 'ask', 'OPEN', workspace), line(9, 'notify', 'OLD', null), line(1, 'notify', 'NEW', null)].join('\n') + '\n')
-  assert.equal(prune(config, now), 1)
-  assert.deepEqual(readEntries(config.logPath).map((e) => e.key), ['OPEN', 'NEW'])
+  assert.equal(prune(config, now), 2)
+  assert.deepEqual(readEntries(config.logPath).map((e) => e.key), ['NEW'])
   assert.equal(prune(config, now), 0)
 
   // someone holds the lock: prune skips this round, the CLI waits and appends once it is free
@@ -355,7 +371,7 @@ test('prune drops old lines and keeps open asks; the CLI waits for a prune holdi
   assert.equal(readEntries(config.logPath).some((e) => e.key === 'LATE'), false)
   rmdirSync(`${config.logPath}.lock`)
   assert.equal((await pending).code, 0)
-  assert.deepEqual(parseLog(readFileSync(config.logPath, 'utf8')).map((e) => e.key), ['OPEN', 'NEW', 'OLD2', 'LATE'])
+  assert.deepEqual(parseLog(readFileSync(config.logPath, 'utf8')).map((e) => e.key), ['NEW', 'OLD2', 'LATE'])
 
   // a lock left by a killed process is broken
   mkdirSync(`${config.logPath}.lock`)

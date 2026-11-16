@@ -18,8 +18,9 @@ import { accessSync, appendFileSync, constants, existsSync, mkdirSync, readFileS
 import { homedir } from 'node:os'
 import { delimiter, dirname, join, posix, resolve } from 'node:path'
 
-const USAGE = `  agent-inbox notify <key> <message> [<url>]
-      a line in the panel's Messages: something happened, nothing waits on the person
+const USAGE = `  agent-inbox notify [--point <id>] <key> <message> [<url>]
+      a line in the panel's Messages: something happened, nothing waits on the person;
+      --point <id> names the point that sent it, as \`point add\` recorded it, and the line shows it
   agent-inbox ask [--worktree <path>] <key> <message> [<url>]
       you stop until the person answers: the workspace moves to the waiting column with
       "<key>: <first line of the message>" as its comment and the unread dot, and the panel lists it
@@ -198,7 +199,7 @@ function withLock(fn) {
   }
 }
 
-function append(kind, key, message, url, worktree) {
+function append(kind, key, message, url, worktree, point) {
   const line = JSON.stringify({
     v: 1,
     ts: now(),
@@ -207,7 +208,8 @@ function append(kind, key, message, url, worktree) {
     message: clean(message),
     url: orNull(url),
     worktree: orNull(worktree),
-    terminal: orNull(process.env.ORCA_TERMINAL_HANDLE ?? '')
+    terminal: orNull(process.env.ORCA_TERMINAL_HANDLE ?? ''),
+    point: orNull(point)
   })
   mkdirSync(dirname(LOG), { recursive: true })
   withLock(() => appendFileSync(LOG, `${line}\n`))
@@ -265,11 +267,14 @@ function main(argv) {
   if (argv.length < 1) usage()
   const cmd = argv.shift()
   let wt = ''
-  if (argv[0] === '--worktree') {
-    if (argv.length < 2) usage()
-    wt = argv[1]
+  let point = ''
+  while ((argv[0] === '--worktree' || argv[0] === '--point') && argv.length >= 2) {
+    if (argv[0] === '--worktree') wt = argv[1]
+    else point = argv[1]
     argv.splice(0, 2)
   }
+  // only a message says which point sent it; the other commands name it in their own records
+  if (point && cmd !== 'notify') usage()
   const workspace = () => workspacePath(wt) || die(2, 'no workspace: run inside it or pass --worktree <path>')
   const out = (text) => process.stdout.write(text)
 
@@ -278,7 +283,8 @@ function main(argv) {
       const [key, given, url = ''] = argv
       const message = given ? messageArg(given) : ''
       if (argv.length < 2 || !message) usage()
-      append('notify', key, message, url, workspacePath(wt))
+      if (point) pointId(point)
+      append('notify', key, message, url, workspacePath(wt), point)
       return out(`notify ${key}: ${headline(message)}\n`)
     }
     case 'ask':

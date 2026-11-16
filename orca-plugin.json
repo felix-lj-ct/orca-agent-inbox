@@ -45,27 +45,11 @@
       {
         "key": "retentionDays",
         "title": "Keep messages for (days)",
-        "description": "Older lines are removed from the log when Orca starts, every hour and when settings change. A request still waiting on you is kept however old it is.",
+        "description": "Older lines are deleted from the log when Orca starts, every hour and when settings change. Messages and asks are kept at most 30 days: older lines go, including the reason of a request still waiting on you.",
         "type": "integer",
         "default": 7,
         "minimum": 1,
-        "maximum": 365
-      },
-      {
-        "key": "waitingStatus",
-        "title": "Waiting column",
-        "description": "Board status id that `agent-inbox ask` moves the workspace to; the panel lists every workspace in it. Orca's defaults are todo, in-progress, in-review and completed; a custom column uses its own id.",
-        "type": "string",
-        "default": "in-review",
-        "maxLength": 128
-      },
-      {
-        "key": "resumeStatus",
-        "title": "Resolved column",
-        "description": "Board status id that `agent-inbox resolve` and Mark handled move the workspace back to, when it is still in the waiting column.",
-        "type": "string",
-        "default": "in-progress",
-        "maxLength": 128
+        "maximum": 30
       },
       {
         "key": "keepAsksUntilHandled",
@@ -82,9 +66,26 @@
         "default": false
       },
       {
+        "key": "autoReadMinutes",
+        "title": "Mark messages read after (minutes)",
+        "description": "Point ids and minutes after which their messages count as read. One entry per line or comma separated, for example: nightly-e2e: 5, qa-report: 30, deploy-watch: 120. A point not listed never becomes read on its own.",
+        "type": "string",
+        "default": "",
+        "multiline": true,
+        "maxLength": 2000,
+        "placeholder": "nightly-e2e: 5, qa-report: 30, deploy-watch: 120"
+      },
+      {
         "key": "showRecommendations",
         "title": "Show recommended points",
         "description": "On: the panel shows Recommended points after Wired points: points Agent Inbox wires itself, added with one press. Off: the section goes; a recommended point you added keeps working and stays under Wired points, where Remove stops it.",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "showPointSearch",
+        "title": "Show point search",
+        "description": "On: a search box above Messages filters messages by point, and one above Wired points filters the points. Off: both boxes go, and every message and point shows.",
         "type": "boolean",
         "default": true
       },
