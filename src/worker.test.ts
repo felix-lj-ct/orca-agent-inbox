@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fakeOrca } from './fake-orca'
 import { orcaDataDir } from './launch'
+import { pathKey } from './log'
 import { RECOMMENDED } from './recommended'
 import { cliPath, readEntries, readPoints } from './store'
 import * as main from './worker'
@@ -163,7 +164,7 @@ test('an ask past the window is deleted, and its board comment no longer shows a
     assert.equal(readEntries(logPath).length, 0)
     // only the hash of the comment stays, so a restart still knows not to show it
     const expired = host.data().storage.expired as Record<string, string>
-    assert.match(expired[workspace], /^[0-9a-f]{16}$/)
+    assert.match(expired[pathKey(workspace)], /^[0-9a-f]{16}$/)
     await worker.deactivate()
   })
 })

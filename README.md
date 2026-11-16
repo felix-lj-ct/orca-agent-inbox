@@ -25,15 +25,17 @@ Agents and scripts send with one CLI, `agent-inbox`.
 Requires Orca 1.4.248 or later, on macOS, Linux or Windows 10 and later. On Windows, see
 [what it does not support yet](#not-supported-on-windows-yet).
 
-1. **Install.** In Orca, go to Settings → Plugins → **Add plugin** → **From a Git URL…**, paste
-
-   ```text
-   https://github.com/felix-lj-ct/orca-agent-inbox
-   ```
-
-   and press **Continue**. Orca takes the latest version tag. It shows the plugin as unverified because it does
-   not come from a catalog; press **Install**, then enable it and approve its access (see
+1. **Install from Orca's plugin catalog.** Open
+   [Agent Inbox on orca.dev](https://orca.dev/plugins/felix-lj-ct/orca-agent-inbox) and press **Open in Orca**.
+   Or, in Orca, open Settings → Plugins, search for **Agent Inbox** and choose **Install**; if the community
+   catalog is not there yet, add it once with **Add marketplace**, URL
+   `https://github.com/stablyai/orca-community-plugins.git`, ref `main`. Orca lists it as a community plugin,
+   unreviewed by Orca: press **Install**, then enable it and approve its access (see
    [Permissions](#permissions)).
+
+   To install without the catalog, use the repository instead: Settings → Plugins → **Add plugin** →
+   **From a Git URL…**, paste `https://github.com/felix-lj-ct/orca-agent-inbox` and press **Continue**; Orca
+   takes the latest version tag.
 2. **Open the panel** in the right sidebar. The plugin installs the CLI at
    `~/.config/agent-inbox/bin/agent-inbox`, a guide for agents at `~/.config/agent-inbox/agent-guide.md` and the
    CLI reference beside it, `cli.md` (on Windows, also in [WSL](#wsl)). **Waiting on you** shows a **Set up
