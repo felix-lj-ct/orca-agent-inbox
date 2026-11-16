@@ -31,6 +31,8 @@ export interface InboxMessage {
   key: string
   text: string
   url: string | null
+  /** The recorded point that sent it (`notify --point <id>`); null when its call named none. */
+  point: string | null
   read: boolean
 }
 
@@ -67,6 +69,8 @@ export interface Inbox {
   keepMessagesUntilRead: boolean
   /** The panel shows Recommended points, after Wired points. */
   showRecommendations: boolean
+  /** The panel shows the point search above Messages and above Wired points. */
+  showPointSearch: boolean
   language: Language
   setup: Setup
   /** First start without a log: the setup task waits on the person until they mark it handled. */
@@ -86,15 +90,22 @@ declare module 'orca' {
      * How many messages of each tab to send. A request answer stops at 1 MiB, so the worker sends at most that
      * many, cuts long texts and stops early when they would not fit.
      */
-    'inbox.list': { input: { unread: number; read: number }; output: Inbox }
+    /**
+     * How many messages of each tab to send, and the point search the person typed: messages whose point id
+     * contains it, in any case; absent or empty is every message. Ignored while the settings hide the search.
+     */
+    'inbox.list': { input: { unread: number; read: number; point?: string }; output: Inbox }
     /** Switches Orca to the terminal of the agent that asked. */
     'inbox.open': { input: { path: string; terminal: string | null }; output: ActionResult }
     /** `agent-inbox resolve`: back to the resolved column, comment cleared; a kept ask is handled. */
     'inbox.resolve': { input: { path: string; key: string }; output: ActionResult }
     /** Marks messages read; they move to the read history until the retention window drops them. */
     'inbox.read': { input: { ids: string[] }; output: ActionResult }
-    /** Marks every unread message up to `through`, the newest the panel showed, read: shown or not. */
-    'inbox.readAll': { input: { through: number }; output: ActionResult }
+    /**
+     * Marks every unread message up to `through`, the newest the panel showed, read: shown or not.
+     * `point` narrows it to the Messages search, as `inbox.list` takes it, while the settings show the search.
+     */
+    'inbox.readAll': { input: { through: number; point?: string }; output: ActionResult }
     /** The setup task is handled; it does not come back. */
     'inbox.setupDone': { output: ActionResult }
     /**

@@ -10,14 +10,37 @@ import type { Inbox, InboxMessage } from './protocol'
 
 const ago = (minutes: number) => Date.now() - minutes * 60_000
 
-const message = (id: string, minutes: number, key: string, text: string, read: boolean, url: string | null = null): InboxMessage => ({
+const message = (
+  id: string,
+  minutes: number,
+  key: string,
+  text: string,
+  read: boolean,
+  url: string | null = null,
+  point: string | null = null
+): InboxMessage => ({
   id,
   at: ago(minutes),
   key,
   text,
   url,
+  point,
   read
 })
+
+const coverMessages = [
+  message('m01', 9, 'nightly-e2e', '3 of 412 tests failed in checkout-flow; the report is attached.', false, 'https://ci.acme.dev/e2e/2231', 'nightly-e2e'),
+  message('m02', 34, 'aws-sso', 'The session expires in 2 hours. Run aws sso login before the 18:00 deploy.', false, null, 'credential-expiry'),
+  message('m03', 71, 'PAY-2305', 'PR #918 is open and green, ready for your review.', false, 'https://github.com/acme/payments-api/pull/918', 'pr-ready'),
+  message('m04', 180, 'dependency-audit', 'Two high-severity advisories in undici; fix PR #921 opened.', false, 'https://github.com/acme/web-app/pull/921'),
+  message('m05', 310, 'db-backup', 'Weekly snapshot finished: 182 GB in 41 min, restore verified.', false, null, 'db-backup'),
+  message('m06', 420, 'WEB-1138', 'Merged into main and deployed to staging.', true),
+  message('m07', 600, 'perf-bench', 'p95 latency of /checkout is down from 412 ms to 287 ms.', true),
+  message('m08', 1_380, 'PAY-2281', 'Ready for QA: test notes posted on the ticket.', true),
+  message('m09', 1_500, 'nightly-e2e', 'All 412 tests passed.', true, null, 'nightly-e2e'),
+  message('m10', 2_900, 'cost-report', 'Cloud spend this week: $4,812, 3% under budget.', true),
+  message('m11', 4_300, 'release-2.13.2', 'Rolled out to production; error rate unchanged.', true)
+]
 
 const cover: Inbox = {
   waiting: [
@@ -52,19 +75,7 @@ const cover: Inbox = {
       resumed: false
     }
   ],
-  messages: [
-    message('m01', 9, 'nightly-e2e', '3 of 412 tests failed in checkout-flow; the report is attached.', false, 'https://ci.acme.dev/e2e/2231'),
-    message('m02', 34, 'aws-sso', 'The session expires in 2 hours. Run aws sso login before the 18:00 deploy.', false),
-    message('m03', 71, 'PAY-2305', 'PR #918 is open and green, ready for your review.', false, 'https://github.com/acme/payments-api/pull/918'),
-    message('m04', 180, 'dependency-audit', 'Two high-severity advisories in undici; fix PR #921 opened.', false, 'https://github.com/acme/web-app/pull/921'),
-    message('m05', 310, 'db-backup', 'Weekly snapshot finished: 182 GB in 41 min, restore verified.', false),
-    message('m06', 420, 'WEB-1138', 'Merged into main and deployed to staging.', true),
-    message('m07', 600, 'perf-bench', 'p95 latency of /checkout is down from 412 ms to 287 ms.', true),
-    message('m08', 1_380, 'PAY-2281', 'Ready for QA: test notes posted on the ticket.', true),
-    message('m09', 1_500, 'nightly-e2e', 'All 412 tests passed.', true),
-    message('m10', 2_900, 'cost-report', 'Cloud spend this week: $4,812, 3% under budget.', true),
-    message('m11', 4_300, 'release-2.13.2', 'Rolled out to production; error rate unchanged.', true)
-  ],
+  messages: coverMessages,
   unreadCount: 5,
   readCount: 6,
   points: [
@@ -79,6 +90,7 @@ const cover: Inbox = {
   retentionDays: 7,
   keepMessagesUntilRead: false,
   showRecommendations: false,
+  showPointSearch: true,
   language: 'en',
   setup: {
     cli: '~/.config/agent-inbox/bin/agent-inbox',
@@ -102,28 +114,51 @@ export default defineCheck({
   'first-start': {
     settings: { language: 'zh-CN' },
     requests: {
-      'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], setupPending: true })
+      'inbox.list': () => ({
+        ...cover,
+        language: 'zh-CN',
+        waiting: [],
+        messages: [],
+        unreadCount: 0,
+        readCount: 0,
+        points: [],
+        setupPending: true
+      })
     }
   },
   // Recommended points with nothing added, in English and in Chinese: nothing above them but closed sections
-  recommended: { requests: { 'inbox.list': () => ({ ...cover, waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], showRecommendations: true }) } },
+  recommended: {
+    requests: {
+      'inbox.list': () => ({
+        ...cover,
+        waiting: [],
+        messages: [],
+        unreadCount: 0,
+        readCount: 0,
+        points: [],
+        showRecommendations: true
+      })
+    }
+  },
   'recommended-zh': {
     settings: { language: 'zh-CN' },
     requests: {
-      'inbox.list': () => ({ ...cover, language: 'zh-CN', waiting: [], messages: [], unreadCount: 0, readCount: 0, points: [], showRecommendations: true })
+      'inbox.list': () => ({
+        ...cover,
+        language: 'zh-CN',
+        waiting: [],
+        messages: [],
+        unreadCount: 0,
+        readCount: 0,
+        points: [],
+        showRecommendations: true
+      })
     }
   },
   markdown: {
     requests: {
-      'inbox.list': () => ({
-        ...cover,
-        waiting: [
-          {
-            ...cover.waiting[0],
-            reason: 'Pick the index migration for **staging**:\n\n1. Drop `settlement_batch_idx` now (~6 min lock)\n2. Rebuild it `CONCURRENTLY` (~40 min, no lock)'
-          }
-        ],
-        messages: [
+      'inbox.list': () => {
+        const messages = [
           message(
             'md1',
             3,
@@ -134,11 +169,31 @@ export default defineCheck({
           ),
           message('md2', 40, 'PAY-2305', 'PR #918 is green and ready for review:\n- adds `refund_reason`\n- backfills 12k rows', false, 'https://github.com/acme/payments-api/pull/918'),
           ...cover.messages.slice(1, 3)
-        ],
-        unreadCount: 4
-      })
+        ]
+        return {
+          ...cover,
+          waiting: [
+            {
+              ...cover.waiting[0],
+              reason: 'Pick the index migration for **staging**:\n\n1. Drop `settlement_batch_idx` now (~6 min lock)\n2. Rebuild it `CONCURRENTLY` (~40 min, no lock)'
+            }
+          ],
+          messages,
+          unreadCount: 4
+        }
+      }
     }
   },
+  // the settings hide both point searches: the lists show everything, with no search boxes
+  'no-search': {
+    requests: { 'inbox.list': () => ({ ...cover, showPointSearch: false }) },
+    persisted: { plugin: { pointsOpen: true } }
+  },
   // a shot stops at the window's height: with nothing above them, the wired points fit in one
-  'cover-points': { requests: { 'inbox.list': () => ({ ...cover, waiting: [], messages: [], unreadCount: 0, readCount: 0 }) }, persisted: { plugin: { pointsOpen: true } } }
+  'cover-points': {
+    requests: {
+      'inbox.list': () => ({ ...cover, waiting: [], messages: [], unreadCount: 0, readCount: 0 })
+    },
+    persisted: { plugin: { pointsOpen: true } }
+  }
 })

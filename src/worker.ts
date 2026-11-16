@@ -14,9 +14,9 @@ import { homedir } from 'node:os'
 import { basename, delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { waitingItems } from './board'
-import { configDir, type InboxConfig, readConfig } from './config'
+import { configDir, type InboxConfig, readConfig, RESUME_STATUS, WAITING_STATUS } from './config'
 import { activeProfileDir, activeWorkspace, defaultAgent, orcaDataDir, sqliteValue } from './launch'
-import { currentId, heldAsks, type Hold, messageId, openAsks, pathKey, recentMessages } from './log'
+import { askComment, autoRead, currentId, type Entry, heldAsks, type Hold, messageId, openAsks, pathKey, recentMessages, textId } from './log'
 import { pointsPath } from './points'
 import { type ActionResult, type Inbox, type InboxMessage, MESSAGE_PAGE, REPO, type Setup } from './protocol'
 import { questionKey, questionReason } from './question'
@@ -27,6 +27,7 @@ import { distroNames, linkArgs, WSL_EXE, wslDistros } from './wsl'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CLI = join(ROOT, 'cli', 'agent-inbox.mjs')
 const PRUNE_MS = 3600_000
+const DAY = 24 * 3600 * 1000
 /** A WSL distro that was not running is looked at again after this long. */
 const WSL_RETRY_MS = 300_000
 /** A request answer stops at 1 MiB: the messages get half of it, the board and the points share the rest. */
@@ -45,6 +46,8 @@ const SETUP_DONE = 'setupDone'
 /** With asks kept until handled: when the setting went on, and the asks marked handled (see Hold). */
 const HOLD_SINCE = 'holdSince'
 const HANDLED = 'handled'
+/** Per workspace path, the hash of the board comment the CLI wrote for an ask the retention window deleted. */
+const EXPIRED = 'expired'
 const WINDOWS = process.platform === 'win32'
 const ORCA_APP_CLI = '/Applications/Orca.app/Contents/Resources/bin/orca'
 /** orca CLI JSON, read field by field */
@@ -61,6 +64,9 @@ function clip(text: string, max: number): string {
 
 /** How many messages of a tab the panel asked for; the first page when it did not say. */
 const pageSize = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : MESSAGE_PAGE)
+
+/** Whether a message's point matches the search, already lower-cased: every message when it is empty. */
+const pointMatches = (point: string | null, search: string): boolean => search === '' || (point !== null && point.toLowerCase().includes(search))
 
 /** The first messages that fit in bytes together, as JSON. */
 function fitting(messages: InboxMessage[], bytes: number): InboxMessage[] {
@@ -183,13 +189,54 @@ export default function activate(orca: OrcaWorkerApi): void {
     }
   }
 
+  /** Per workspace path, the hash of the board comment the CLI wrote for an ask the window deleted. */
+  async function storedExpired(): Promise<Record<string, string>> {
+    const value = await orca.storage.get(EXPIRED)
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+    )
+  }
+
   async function pruneNow(): Promise<void> {
     try {
-      const removed = prune(config, Date.now(), (await hold()) ?? undefined)
+      const now = Date.now()
+      const from = now - config.retentionDays * DAY
+      const expired = await storedExpired()
+      let changed = false
+      for (const ask of openAsks(readEntries(config.logPath)).values()) {
+        if (ask.at >= from || !ask.worktree) continue
+        const path = pathKey(ask.worktree)
+        const id = textId(askComment(ask))
+        if (expired[path] !== id) {
+          expired[path] = id
+          changed = true
+        }
+      }
+      // before the prune, so a restart cannot lose which board comments the deleted asks left behind
+      if (changed) await orca.storage.set(EXPIRED, expired)
+      const removed = prune(config, now)
       if (removed > 0) orca.log(`pruned ${removed} log lines older than ${config.retentionDays} days`)
     } catch (e) {
       orca.log(`prune ${config.logPath}: ${errorText(e)}`)
     }
+  }
+
+  /**
+   * The workspaces whose ask the window deleted and whose board comment is still the one the CLI wrote for it:
+   * the panel no longer shows that comment as the reason. Comments changed since, or workspaces asked again,
+   * leave the record.
+   */
+  async function liveExpired(worktrees: Raw[], open: Map<string, Entry>): Promise<Set<string>> {
+    const stored = await storedExpired()
+    const comments = new Map(worktrees.map((w) => [pathKey(String(w.path ?? '')), String(w.comment ?? '').trim()]))
+    const kept: Record<string, string> = {}
+    for (const [path, id] of Object.entries(stored)) {
+      const comment = comments.get(path)
+      if (comment && !open.has(path) && textId(comment) === id) kept[path] = id
+    }
+    if (Object.keys(kept).length !== Object.keys(stored).length) await orca.storage.set(EXPIRED, kept)
+    return new Set(Object.keys(kept))
   }
 
   /** Per WSL distro (in lower case): true once linked, else when it was last looked at. */
@@ -254,15 +301,26 @@ export default function activate(orca: OrcaWorkerApi): void {
   }
   const readIds = async () => new Set([...(await storedIds(READ)), ...(await storedIds(DISMISSED))])
 
-  async function list(limits: { unread?: unknown; read?: unknown }): Promise<Inbox> {
+  async function list(limits: { unread?: unknown; read?: unknown; point?: unknown }): Promise<Inbox> {
     await ready
+    const now = Date.now()
     const entries = readEntries(config.logPath)
     const read = await readIds()
-    const messages = recentMessages(entries, Date.now(), config.retentionDays).map((e): InboxMessage => {
-      const id = messageId(e)
-      const url = e.url !== null && e.url.length <= MAX_URL ? e.url : null
-      return { id, at: e.at, key: clip(e.key, MAX_KEY), text: clip(e.message, MAX_TEXT), url, read: read.has(id) }
-    })
+    // a point's messages count as read once its minutes pass (the autoReadMinutes setting), as Mark read would
+    const auto = autoRead(entries, config.autoReadMinutes, now).filter((id) => !read.has(id))
+    if (auto.length > 0) {
+      await markRead(auto)
+      for (const id of auto) read.add(id)
+    }
+    const search = config.showPointSearch && typeof limits.point === 'string' ? limits.point.trim().toLowerCase() : ''
+    const messages = recentMessages(entries, now, config.retentionDays)
+      .filter((entry) => pointMatches(entry.point, search))
+      .map((e): InboxMessage => {
+        const id = messageId(e)
+        const url = e.url !== null && e.url.length <= MAX_URL ? e.url : null
+        const point = e.point === null ? null : clip(e.point, MAX_KEY)
+        return { id, at: e.at, key: clip(e.key, MAX_KEY), text: clip(e.message, MAX_TEXT), url, point, read: read.has(id) }
+      })
     const unread = messages.filter((m) => !m.read)
     const history = messages.filter((m) => m.read)
     const base = {
@@ -273,6 +331,7 @@ export default function activate(orca: OrcaWorkerApi): void {
       retentionDays: config.retentionDays,
       keepMessagesUntilRead: config.keepMessagesUntilRead,
       showRecommendations: config.showRecommendations,
+      showPointSearch: config.showPointSearch,
       language: config.language,
       setup,
       setupPending: await setupPending()
@@ -284,7 +343,9 @@ export default function activate(orca: OrcaWorkerApi): void {
       ])
       const kept = await hold()
       const held = kept === null ? undefined : heldAsks(entries, kept)
-      const waiting = waitingItems(ps.worktrees ?? [], terms.terminals ?? [], openAsks(entries), config.waitingStatus, held)
+      const open = openAsks(entries)
+      const expired = await liveExpired(ps.worktrees ?? [], open)
+      const waiting = waitingItems(ps.worktrees ?? [], terms.terminals ?? [], open, WAITING_STATUS, held, expired)
       if (WINDOWS) void linkWsl(ps.worktrees ?? [])
       return { ...base, waiting, error: setupError }
     } catch (e) {
@@ -311,8 +372,8 @@ export default function activate(orca: OrcaWorkerApi): void {
     run(process.execPath, [CLI, ...args], {
       ELECTRON_RUN_AS_NODE: '1',
       AGENT_INBOX_LOG: config.logPath,
-      AGENT_INBOX_WAITING: config.waitingStatus,
-      AGENT_INBOX_RESUME: config.resumeStatus,
+      AGENT_INBOX_WAITING: WAITING_STATUS,
+      AGENT_INBOX_RESUME: RESUME_STATUS,
       AGENT_INBOX_ORCA: orcaCli(config),
       ...env
     })
@@ -360,9 +421,12 @@ export default function activate(orca: OrcaWorkerApi): void {
   orca.panels.handle('inbox.open', (input) => open(input))
   orca.panels.handle('inbox.resolve', (input) => resolve(input))
   orca.panels.handle('inbox.read', ({ ids }) => markRead(ids))
-  orca.panels.handle('inbox.readAll', async ({ through }) => {
+  orca.panels.handle('inbox.readAll', async ({ through, point }) => {
     await ready
-    const shown = recentMessages(readEntries(config.logPath), Date.now(), config.retentionDays).filter((e) => e.at <= through)
+    const search = config.showPointSearch && typeof point === 'string' ? point.trim().toLowerCase() : ''
+    const shown = recentMessages(readEntries(config.logPath), Date.now(), config.retentionDays).filter(
+      (e) => e.at <= through && pointMatches(e.point, search)
+    )
     return markRead(shown.map(messageId))
   })
 

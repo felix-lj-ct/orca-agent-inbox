@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { join } from 'node:path'
-import { DEFAULTS, expandHome, readConfig, renderConfig } from './config'
+import { DEFAULTS, expandHome, parseAutoRead, readConfig, renderConfig } from './config'
 
 const HOME = '/home/someone'
 
@@ -9,10 +9,9 @@ test('fills defaults and expands ~', () => {
     ...DEFAULTS,
     logPath: join(HOME, '.local/state/agent-inbox/inbox.jsonl')
   })
-  const config = readConfig({ logPath: ' ~/logs/inbox.jsonl ', orcaCli: '~/bin/orca', waitingStatus: 'blocked', language: 'zh-CN' }, HOME)
+  const config = readConfig({ logPath: ' ~/logs/inbox.jsonl ', orcaCli: '~/bin/orca', language: 'zh-CN' }, HOME)
   assert.equal(config.logPath, join(HOME, 'logs/inbox.jsonl'))
   assert.equal(config.orcaCli, join(HOME, 'bin/orca'))
-  assert.equal(config.waitingStatus, 'blocked')
   assert.equal(config.language, 'zh-CN')
 })
 
@@ -25,12 +24,13 @@ test('~ is the home folder written with either slash, and only at the start', ()
 })
 
 test('falls back on values of the wrong type or range', () => {
-  const config = readConfig({ retentionDays: 0, language: 'fr', logPath: 42, waitingStatus: '  ' }, HOME)
+  const config = readConfig({ retentionDays: 0, language: 'fr', logPath: 42 }, HOME)
   assert.equal(config.retentionDays, 7)
   assert.equal(config.language, 'auto')
   assert.equal(config.logPath, join(HOME, '.local/state/agent-inbox/inbox.jsonl'))
-  assert.equal(config.waitingStatus, 'in-review')
-  assert.equal(readConfig({ retentionDays: 1000 }, HOME).retentionDays, 365)
+  // at most 30 days, whatever the setting asks for
+  assert.equal(readConfig({ retentionDays: 1000 }, HOME).retentionDays, 30)
+  assert.equal(readConfig({ retentionDays: 30 }, HOME).retentionDays, 30)
   assert.equal(readConfig({ retentionDays: 2.5 }, HOME).retentionDays, 7)
 })
 
@@ -41,14 +41,26 @@ test('asks and messages are kept until marked only when the settings say true', 
   assert.deepEqual([odd.keepAsksUntilHandled, odd.keepMessagesUntilRead], [false, false])
 })
 
-test('recommended points show unless the settings say false', () => {
+test('recommended points and the point search show unless the settings say false', () => {
   assert.equal(readConfig({}, HOME).showRecommendations, true)
   assert.equal(readConfig({ showRecommendations: 'false' }, HOME).showRecommendations, true)
   assert.equal(readConfig({ showRecommendations: false }, HOME).showRecommendations, false)
+  assert.equal(readConfig({}, HOME).showPointSearch, true)
+  assert.equal(readConfig({ showPointSearch: 'false' }, HOME).showPointSearch, true)
+  assert.equal(readConfig({ showPointSearch: false }, HOME).showPointSearch, false)
 })
 
 test('config.json holds what the CLI reads, quotes and backslashes included', () => {
-  const config = readConfig({ logPath: "C:\\Users\\it's \"here\"\\inbox.jsonl", waitingStatus: 'needs-me', orcaCli: '/opt/orca' }, HOME)
+  const config = readConfig({ logPath: "C:\\Users\\it's \"here\"\\inbox.jsonl", orcaCli: '/opt/orca' }, HOME)
   const read = JSON.parse(renderConfig(config))
-  assert.deepEqual([read.log, read.waiting, read.resume, read.orca], ["C:\\Users\\it's \"here\"\\inbox.jsonl", 'needs-me', 'in-progress', '/opt/orca'])
+  assert.deepEqual([read.log, read.waiting, read.resume, read.orca], ["C:\\Users\\it's \"here\"\\inbox.jsonl", 'in-review', 'in-progress', '/opt/orca'])
+})
+
+test('autoReadMinutes takes point ids and their minutes per line or comma separated, and skips what is not that', () => {
+  assert.deepEqual(parseAutoRead('nightly-e2e: 5\nbuild:30\n\nqa: 12'), { 'nightly-e2e': 5, build: 30, qa: 12 })
+  assert.deepEqual(parseAutoRead('nightly-e2e: 5, qa-report: 30, deploy-watch: 120'), { 'nightly-e2e': 5, 'qa-report': 30, 'deploy-watch': 120 })
+  // 0 or less never marks, an entry of another shape says nothing, and the last of an id wins
+  assert.deepEqual(parseAutoRead('build: 0\nbuild: 10\nno minutes\n: 4\nid: soon\nbuild: 2'), { build: 2 })
+  assert.deepEqual(parseAutoRead(42), {})
+  assert.deepEqual(readConfig({ autoReadMinutes: 'build: 3' }, HOME).autoReadMinutes, { build: 3 })
 })

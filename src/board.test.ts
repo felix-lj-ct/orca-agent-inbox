@@ -1,6 +1,6 @@
 import { assert, test } from 'orca/testing'
 import { waitingItems } from './board'
-import { heldAsks, openAsks, parseLog } from './log'
+import { heldAsks, openAsks, parseLog, pathKey } from './log'
 
 const ask = (key: string, worktree: string, terminal: string | null, ts = '2026-11-05T02:00:00Z') =>
   JSON.stringify({ v: 1, ts, kind: 'ask', key, message: `${key} needs a decision`, url: 'https://x/1', worktree, terminal })
@@ -44,6 +44,17 @@ test('lists the waiting column with the ask behind each card', () => {
   )
   assert.equal(items[0].url, 'https://x/1')
   assert.equal(items[0].since, Date.parse('2026-11-05T02:00:00Z'))
+})
+
+test('an ask the window deleted leaves its board comment out of the reason', () => {
+  const items = waitingItems(worktrees, terminals, new Map(), 'in-review', new Map(), new Set([pathKey('/w/asked')]))
+  const asked = items.find((i) => i.path === '/w/asked')
+  // the card still waits; the key and the comment the CLI wrote for the ask are gone with it
+  assert.deepEqual([asked?.key, asked?.reason, asked?.since], ['asked', null, null])
+  // a comment the person wrote after the ask expired is still the reason
+  const edited = worktrees.map((w) => (w.path === '/w/asked' ? { ...w, comment: 'check the migration' } : w))
+  const again = waitingItems(edited, terminals, new Map(), 'in-review', new Map(), new Set()).find((i) => i.path === '/w/asked')
+  assert.deepEqual([again?.key, again?.reason], ['asked', 'check the migration'])
 })
 
 test('a closed terminal falls back to the workspace terminals, and the column is configurable', () => {

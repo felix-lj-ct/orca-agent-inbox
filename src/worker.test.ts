@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { fakeOrca } from './fake-orca'
 import { orcaDataDir } from './launch'
+import { pathKey } from './log'
 import { RECOMMENDED } from './recommended'
 import { cliPath, readEntries, readPoints } from './store'
 import * as main from './worker'
@@ -45,7 +46,7 @@ function sandbox() {
     logPath,
     [
       line(20, 'notify', 'OLD', 'past the window'),
-      line(2, 'notify', 'BUILD', 'nightly build failed', { url: 'https://ci/1' }),
+      line(2, 'notify', 'BUILD', 'nightly build failed', { url: 'https://ci/1', point: 'build' }),
       line(1, 'ask', 'P-1', 'pick A or B', { worktree: workspace, terminal: 'term_asker' }),
       line(0.5, 'notify', 'REPORT', 'report posted')
     ].join('\n') + '\n'
@@ -115,13 +116,14 @@ test('installs, prunes, and lists what waits and the recent messages', async () 
         resumed: false
       }
     ])
-    assert.deepEqual(inbox.messages.map((m) => [m.key, m.text, m.url]), [
-      ['REPORT', 'report posted', null],
-      ['BUILD', 'nightly build failed', 'https://ci/1']
+    assert.deepEqual(inbox.messages.map((m) => [m.key, m.text, m.url, m.point]), [
+      ['REPORT', 'report posted', null, null],
+      ['BUILD', 'nightly build failed', 'https://ci/1', 'build']
     ])
     assert.deepEqual([inbox.unreadCount, inbox.readCount], [2, 0])
     assert.deepEqual(inbox.points, [{ id: 'build', kind: 'notify', key: 'BUILD', when: 'the nightly build failed', wiredIn: 'build.sh' }])
     assert.equal(inbox.retentionDays, 7)
+    assert.equal(inbox.showPointSearch, true)
     assert.deepEqual(inbox.setup, {
       cli: cliPath(home),
       guide: join(home, '.config', 'agent-inbox', 'agent-guide.md'),
@@ -133,6 +135,36 @@ test('installs, prunes, and lists what waits and the recent messages', async () 
     // the line past the window went on load
     assert.deepEqual(readEntries(logPath).map((e) => e.key), ['BUILD', 'P-1', 'REPORT'])
     assert.deepEqual(worker.refusals, [])
+    await worker.deactivate()
+  })
+})
+
+test('an ask past the window is deleted, and its board comment no longer shows as the reason', async () => {
+  const { home, workspace, orca, logPath } = sandbox()
+  writeFileSync(
+    logPath,
+    JSON.stringify({
+      v: 1,
+      ts: new Date(Date.now() - 40 * DAY).toISOString(),
+      kind: 'ask',
+      key: 'P-1',
+      message: 'pick A or B',
+      url: null,
+      worktree: workspace,
+      terminal: 'term_asker',
+      point: null
+    }) + '\n'
+  )
+  await withHome(home, async () => {
+    const host = mockHost({ settings: { logPath, orcaCli: orca } })
+    const worker = await mountWorker(main, { host })
+    const inbox = await worker.request('inbox.list')
+    // the workspace still waits on the board, without the reason the deleted ask gave
+    assert.deepEqual(inbox.waiting.map((w) => [w.key, w.reason, w.since]), [['workspace', null, null]])
+    assert.equal(readEntries(logPath).length, 0)
+    // only the hash of the comment stays, so a restart still knows not to show it
+    const expired = host.data().storage.expired as Record<string, string>
+    assert.match(expired[pathKey(workspace)], /^[0-9a-f]{16}$/)
     await worker.deactivate()
   })
 })
@@ -161,10 +193,10 @@ test('read marks messages read and keeps listing them; open switches to the term
 test('resolve runs the CLI, which moves the workspace back and logs it', async () => {
   const { home, orca, logPath, workspace, calls } = sandbox()
   await withHome(home, async () => {
-    const host = mockHost({ settings: { logPath, orcaCli: orca, resumeStatus: 'doing' } })
+    const host = mockHost({ settings: { logPath, orcaCli: orca } })
     const worker = await mountWorker(main, { host })
     assert.deepEqual(await worker.request('inbox.resolve', { path: workspace, key: 'P-1' }), { ok: true })
-    assert.ok(calls().includes(`worktree set --worktree path:${workspace} --workspace-status doing --comment  --json`))
+    assert.ok(calls().includes(`worktree set --worktree path:${workspace} --workspace-status in-progress --comment  --json`))
     const last = readEntries(logPath).at(-1)
     assert.equal(last?.kind, 'resolve')
     assert.equal(last?.worktree, workspace)
@@ -266,6 +298,72 @@ test('sends as many messages of each tab as asked, and Mark all read reaches the
     assert.deepEqual([after.unreadCount, after.readCount], [1, 30])
     assert.deepEqual(after.messages.map((m) => [m.key, m.read]), [['N31', false], ['N30', true], ['N29', true], ['N28', true]])
     await worker.deactivate()
+  })
+})
+
+test('the Messages search narrows the list, the counts and Mark all read to the point text', async () => {
+  const { home, orca, logPath } = sandbox()
+  const now = Date.now()
+  const notify = (secondsAgo: number, key: string, point: string | null) =>
+    JSON.stringify({ v: 1, ts: new Date(now - secondsAgo * 1000).toISOString(), kind: 'notify', key, message: `note ${key}`, url: null, worktree: null, terminal: null, point })
+  writeFileSync(logPath, [notify(4, 'A1', 'nightly-build'), notify(3, 'B1', 'qa-report'), notify(2, 'A2', 'nightly-build'), notify(1, 'C1', null)].join('\n') + '\n')
+  await withHome(home, async () => {
+    const worker = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca } }) })
+    const all = await worker.request('inbox.list', { unread: 20, read: 20 })
+    assert.deepEqual(all.messages.map((m) => m.key), ['C1', 'A2', 'B1', 'A1'])
+
+    // a part of the id, in any case
+    const build = await worker.request('inbox.list', { unread: 20, read: 20, point: 'BUILD' })
+    assert.deepEqual(build.messages.map((m) => m.key), ['A2', 'A1'])
+    assert.deepEqual([build.unreadCount, build.readCount], [2, 0])
+    const report = await worker.request('inbox.list', { unread: 20, read: 20, point: 'rep' })
+    assert.deepEqual(report.messages.map((m) => m.key), ['B1'])
+    const none = await worker.request('inbox.list', { unread: 20, read: 20, point: 'zzz' })
+    assert.deepEqual(none.messages, [])
+    assert.deepEqual([none.unreadCount, none.readCount], [0, 0])
+
+    // Mark all read inside a search leaves the other points unread
+    assert.deepEqual(await worker.request('inbox.readAll', { through: all.messages[0].at, point: 'build' }), { ok: true })
+    const after = await worker.request('inbox.list', { unread: 20, read: 20 })
+    // unread first, then read, each newest first
+    assert.deepEqual(after.messages.map((m) => [m.key, m.read]), [['C1', false], ['B1', false], ['A2', true], ['A1', true]])
+    await worker.deactivate()
+
+    // the settings hide the search: the worker ignores a point it is still sent
+    const off = await mountWorker(main, { host: mockHost({ settings: { logPath, orcaCli: orca, showPointSearch: false } }) })
+    const hidden = await off.request('inbox.list', { unread: 20, read: 20, point: 'build' })
+    assert.equal(hidden.showPointSearch, false)
+    assert.deepEqual(hidden.messages.map((m) => m.key), ['C1', 'A2', 'B1', 'A1'])
+    await off.request('inbox.readAll', { through: all.messages[0].at, point: 'build' })
+    assert.ok((await off.request('inbox.list', { unread: 20, read: 20 })).messages.every((m) => m.read))
+    await off.deactivate()
+  })
+})
+
+test("a point's messages count as read once its minutes pass, and stay read", async () => {
+  const { home, orca, logPath } = sandbox()
+  const now = Date.now()
+  const notify = (minutesAgo: number, key: string, point: string | null) =>
+    JSON.stringify({ v: 1, ts: new Date(now - minutesAgo * 60_000).toISOString(), kind: 'notify', key, message: `note ${key}`, url: null, worktree: null, terminal: null, point })
+  writeFileSync(
+    logPath,
+    [notify(10, 'BUILD-OLD', 'build'), notify(1, 'BUILD-NEW', 'build'), notify(10, 'QA', 'qa'), notify(10, 'PLAIN', null)].join('\n') + '\n'
+  )
+  await withHome(home, async () => {
+    const host = mockHost({ settings: { logPath, orcaCli: orca, autoReadMinutes: 'build: 5\nqa: 30' } })
+    const worker = await mountWorker(main, { host })
+    const first = await worker.request('inbox.list', { unread: 20, read: 20 })
+    // BUILD-OLD passed its 5 minutes; QA's 30 have not passed, and a message without a point is never read on its own
+    assert.deepEqual(first.messages.map((m) => [m.key, m.read]), [['PLAIN', false], ['QA', false], ['BUILD-NEW', false], ['BUILD-OLD', true]])
+    assert.deepEqual([first.unreadCount, first.readCount], [3, 1])
+    await worker.deactivate()
+
+    // marked as read for good: with the setting gone it stays read
+    const off = await mountWorker(main, {
+      host: mockHost({ settings: { logPath, orcaCli: orca }, storage: host.data().storage as Record<string, never> })
+    })
+    assert.deepEqual((await off.request('inbox.list', { unread: 20, read: 20 })).messages.map((m) => [m.key, m.read]), [['PLAIN', false], ['QA', false], ['BUILD-NEW', false], ['BUILD-OLD', true]])
+    await off.deactivate()
   })
 })
 

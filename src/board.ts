@@ -18,7 +18,9 @@ export function waitingItems(
   terminals: Raw[],
   open: Map<string, Entry>,
   waitingStatus: string,
-  held: Map<string, Entry> = new Map()
+  held: Map<string, Entry> = new Map(),
+  /** Workspaces whose ask the retention window deleted (see the worker): their board comment is not the reason. */
+  expired: Set<string> = new Set()
 ): WaitingItem[] {
   const handles = new Set<string>()
   const handleByPane = new Map<string, string>()
@@ -48,7 +50,8 @@ export function waitingItems(
         path: w.path,
         key,
         repo: String(w.repo ?? ''),
-        reason: ask?.message || reasonFromComment(comment, key) || null,
+        // an ask the retention window deleted leaves its board comment behind; it is no longer the reason
+        reason: ask?.message || (expired.has(path) ? null : reasonFromComment(comment, key)) || null,
         since: ask?.at ?? null,
         url: ask?.url ?? null,
         terminal,

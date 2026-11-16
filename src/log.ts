@@ -1,7 +1,8 @@
 // The log the agent-inbox CLI appends to: one JSON object per line,
 //   {"v":1,"ts":"2026-11-05T02:21:53Z","kind":"ask","key":"PROJ-12","message":"...","url":null,
-//    "worktree":"/path/to/workspace","terminal":"term_..."}
+//    "worktree":"/path/to/workspace","terminal":"term_...","point":null}
 // kind is notify (a message), ask (the workspace waits on the person) or resolve (it no longer does).
+// point is the recorded point that sent a notify, when its call named one (`--point <id>`).
 // Asks and resolves always carry the workspace path; a workspace has one waiting state, so a resolve
 // closes every ask before it in the same workspace.
 import { createHash } from 'node:crypto'
@@ -17,6 +18,7 @@ export interface Entry {
   url: string | null
   worktree: string | null
   terminal: string | null
+  point: string | null
 }
 
 const KINDS = new Set<string>(['notify', 'ask', 'resolve'])
@@ -44,7 +46,8 @@ export function parseLine(raw: string): Entry | null {
     message: typeof line.message === 'string' ? line.message : '',
     url: optional(line.url),
     worktree: optional(line.worktree),
-    terminal: optional(line.terminal)
+    terminal: optional(line.terminal),
+    point: optional(line.point)
   }
 }
 
@@ -99,28 +102,27 @@ export function heldAsks(entries: Entry[], hold: Hold): Map<string, Entry> {
 }
 
 /**
- * The lines a prune keeps, in order: every line inside the retention window, plus the open ask of each
- * workspace however old (the panel still shows when and why it asked), and with a hold each held ask with the
- * resolves after it, which say the agent went on. Broken lines go.
+ * The lines a prune keeps, in order: the lines inside the retention window. Older lines go, an open ask
+ * included: nothing in the log outlives the window. Broken lines go too.
  */
-export function keepLines(lines: string[], now: number, retentionDays: number, hold?: Hold): string[] {
+export function keepLines(lines: string[], now: number, retentionDays: number): string[] {
   const from = now - retentionDays * DAY
-  const parsed = lines.map((raw) => ({ raw, entry: parseLine(raw) }))
-  const entries = parsed.flatMap((p) => p.entry ?? [])
-  const keep = new Set(openAsks(entries).values())
-  if (hold) {
-    const held = heldAsks(entries, hold)
-    const reached = new Set<string>()
-    for (const entry of entries) {
-      const path = entry.worktree === null ? '' : pathKey(entry.worktree)
-      if (held.get(path) === entry) reached.add(path)
-      if (reached.has(path) && (entry.kind === 'ask' || entry.kind === 'resolve')) keep.add(entry)
-    }
-  }
-  return parsed.filter(({ entry }) => entry !== null && (entry.at >= from || keep.has(entry))).map((p) => p.raw)
+  return lines.filter((raw) => {
+    const entry = parseLine(raw)
+    return entry !== null && entry.at >= from
+  })
 }
 
 const hashId = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16)
+
+/** A short stable id of a text, such as the comment the CLI writes for an ask. It keeps no text. */
+export const textId = (text: string) => hashId(text)
+
+/** The comment `agent-inbox ask` writes on the board: `<key>: <first line, without heading marks>`. */
+export function askComment(entry: Entry): string {
+  const line = entry.message.split('\n').find((text) => text.trim()) ?? ''
+  return `${entry.key}: ${line.replace(/^\s*#+\s+/, '').trim()}`
+}
 
 /** Short, so Mark read can send many in one request (a request input stops at 64 KiB). It also names a handled ask. */
 export const messageId = (entry: Entry) => hashId(`${entry.at}|${entry.key}|${entry.message}`)
@@ -132,4 +134,15 @@ export const currentId = (id: string) => (id.includes('|') ? hashId(id) : id)
 export function recentMessages(entries: Entry[], now: number, retentionDays: number): Entry[] {
   const from = now - retentionDays * DAY
   return entries.filter((e) => e.kind === 'notify' && e.at >= from).reverse()
+}
+
+/**
+ * Ids of the messages whose point is set to become read on its own (the autoReadMinutes setting): the ones whose
+ * minutes have passed since they arrived.
+ */
+export function autoRead(entries: Entry[], minutes: Record<string, number>, now: number): string[] {
+  return entries.flatMap((entry) => {
+    if (entry.kind !== 'notify' || entry.point === null || !Object.hasOwn(minutes, entry.point)) return []
+    return now - entry.at >= minutes[entry.point] * 60_000 ? [messageId(entry)] : []
+  })
 }

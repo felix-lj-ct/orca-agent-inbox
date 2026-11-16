@@ -1,16 +1,18 @@
 import { assert, test } from 'orca/testing'
-import { currentId, heldAsks, keepLines, messageId, openAsks, parseLine, parseLog, pathKey, recentMessages } from './log'
+import { askComment, currentId, heldAsks, keepLines, messageId, openAsks, parseLine, parseLog, pathKey, recentMessages, textId } from './log'
 
 const DAY = 24 * 3600 * 1000
 const NOW = Date.parse('2026-11-20T12:00:00Z')
-const line = (daysAgo: number, kind: string, key: string, worktree: string | null = null, message = `${kind} ${key}`) =>
-  JSON.stringify({ v: 1, ts: new Date(NOW - daysAgo * DAY).toISOString(), kind, key, message, url: null, worktree, terminal: null })
+const line = (daysAgo: number, kind: string, key: string, worktree: string | null = null, message = `${kind} ${key}`, point: string | null = null) =>
+  JSON.stringify({ v: 1, ts: new Date(NOW - daysAgo * DAY).toISOString(), kind, key, message, url: null, worktree, terminal: null, point })
 
 test('parses a line and rejects broken, foreign and unknown-kind lines', () => {
   const entry = parseLine(line(1, 'ask', 'P-1', '/w'))
   assert.equal(entry?.kind, 'ask')
   assert.equal(entry?.worktree, '/w')
   assert.equal(entry?.at, NOW - DAY)
+  assert.equal(entry?.point, null)
+  assert.equal(parseLine(line(1, 'notify', 'BUILD', null, 'build failed', 'nightly-build'))?.point, 'nightly-build')
   assert.equal(parseLine('2026-11-04 15:44\tinfo\tP-1\told tab format\t'), null)
   assert.equal(parseLine('{"ts":"2026-11-04T00:00:00Z","kind":"shout","key":"P-1"}'), null)
   assert.equal(parseLine('{"ts":"not a date","kind":"ask","key":"P-1"}'), null)
@@ -37,7 +39,7 @@ test('a Windows workspace path is the same with either slash and in any case', (
   assert.equal(pathKey('/w/a\\b', 'darwin'), '/w/a\\b')
 })
 
-test('prune keeps the window and every open ask however old, and drops broken lines', () => {
+test('prune keeps only the window, open asks included, and drops broken lines', () => {
   const lines = [
     line(30, 'ask', 'OLD-OPEN', '/open'),
     line(20, 'ask', 'OLD-CLOSED', '/closed'),
@@ -47,12 +49,14 @@ test('prune keeps the window and every open ask however old, and drops broken li
     line(6, 'notify', 'RECENT'),
     line(0.5, 'ask', 'NEW', '/new')
   ]
-  const kept = keepLines(lines, NOW, 7).map((raw) => JSON.parse(raw).key)
-  assert.deepEqual(kept, ['OLD-OPEN', 'RECENT', 'NEW'])
-  // a shorter window keeps less, an open ask still stays
+  assert.deepEqual(
+    keepLines(lines, NOW, 7).map((raw) => JSON.parse(raw).key),
+    ['RECENT', 'NEW']
+  )
+  // a shorter window keeps less; even an open ask goes
   assert.deepEqual(
     keepLines(lines, NOW, 1).map((raw) => JSON.parse(raw).key),
-    ['OLD-OPEN', 'NEW']
+    ['NEW']
   )
 })
 
@@ -79,24 +83,17 @@ test('held asks: the last of each workspace, resolved or not, unless resolved be
   assert.deepEqual([...heldAsks(again, { since: NOW - 5 * DAY, handled: { [pathKey('/handled')]: messageId(handled) } }).values()].map((e) => e.key), ['AGAIN'])
 })
 
-test('with a hold, prune keeps each held ask however old, with the resolves after it', () => {
-  const lines = [
-    line(30, 'ask', 'HELD', '/held'),
-    line(29, 'notify', 'NOTE', '/held'),
-    line(28, 'resolve', 'HELD', '/held'),
-    line(20, 'ask', 'DONE', '/done'),
-    line(19, 'resolve', 'DONE', '/done')
-  ]
-  const done = parseLine(lines[3])
-  assert.ok(done)
-  const hold = { since: NOW - 40 * DAY, handled: { [pathKey('/done')]: messageId(done) } }
-  assert.deepEqual(keepLines(lines, NOW, 7, hold).map((raw) => JSON.parse(raw).message), ['ask HELD', 'resolve HELD'])
-  assert.deepEqual(keepLines(lines, NOW, 7), [])
-})
-
 test('messages are the notify lines of the window, newest first', () => {
   const entries = parseLog([line(9, 'notify', 'GONE'), line(3, 'notify', 'A'), line(2, 'ask', 'X', '/x'), line(1, 'notify', 'B')].join('\n'))
   assert.deepEqual(recentMessages(entries, NOW, 7).map((e) => e.key), ['B', 'A'])
+})
+
+test('the board comment of an ask is its key and first line, without heading marks', () => {
+  const entry = parseLine(line(1, 'ask', 'P-1', '/w', '## Pick **A** or B\n\nmore detail'))
+  assert.ok(entry)
+  assert.equal(askComment(entry), 'P-1: Pick **A** or B')
+  assert.match(textId(askComment(entry)), /^[0-9a-f]{16}$/)
+  assert.notEqual(textId('one'), textId('two'))
 })
 
 test('a message id is short, and an id stored before 0.1.2 becomes the same one', () => {

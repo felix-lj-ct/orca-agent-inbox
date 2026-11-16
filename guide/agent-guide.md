@@ -1,6 +1,6 @@
 ---
 name: agent-inbox
-description: Use when the person asks where their workflow should ask them or tell them something through Agent Inbox, asks to set up, review or extend Agent Inbox for their workflow, asks to add, change or remove one Agent Inbox point, or asks to align the recorded points with the workflow. Explains how to tell the person's agents about the inbox through a session-start hook so that they judge what to send, how to find the points of scripts and Orca automations that should send, and how to wire each one, in a hook or a script before an instruction file or a prompt. For a whole workflow it produces a proposal and changes no files; for one point it makes the change once the person agrees; to align, it changes only the records, once the person agrees.
+description: Use when the person asks where their workflow should ask them or tell them something through Agent Inbox, asks to set up, review or extend Agent Inbox for their workflow, asks to add, change or remove one Agent Inbox point, or asks to align the recorded points with the workflow. Explains how to tell the person's agents about the inbox through a session-start hook so that they judge what to send, how to find the points of scripts and Orca automations that should send, and how to wire each one, in a hook or a script before an instruction file or a prompt. For a whole workflow it produces a proposal and changes no files; for one point it makes the change once the person agrees; to align, it changes the records and the calls' `--point`, once the person agrees.
 ---
 
 # Agent Inbox: find where a workflow should send
@@ -11,7 +11,8 @@ Agent Inbox is an Orca plugin. Its sidebar panel shows the person three lists:
   each with the reason, a button that goes to the terminal of the agent that asked, and a link when the agent
   gave one.
 - **Messages**: messages sent with `agent-inbox notify`, their text rendered as Markdown, each with a link when
-  the sender gave one, kept for the retention window (default 7 days).
+  the sender gave one and the point that sent it when the call names one (`--point <id>`), kept for the
+  retention window (7 days by default, at most 30).
 - **Wired points**: the points of the workflow that send, recorded with `agent-inbox point add`, so the
   person can see what may write to the inbox and where it is wired.
 
@@ -26,8 +27,8 @@ What the person asked decides your job:
   buttons start you with this request. Make that one change in the workflow and in the records, once the person agrees to it
   (section 6).
 - **Align the points**: the panel's **Align** button starts you with this request. Compare the records with
-  the calls in the workflow and fix the records, once the person agrees (section 7). **Change no workflow
-  files.**
+  the calls in the workflow, fix the records and each `notify` call's `--point`, once the person agrees
+  (section 7). **Change nothing else in the workflow files.**
 
 ## The CLI
 
@@ -83,7 +84,8 @@ If the person names one workflow, read and propose for that one only.
 Find what is already wired: run `agent-inbox point list` for the recorded points, search those same places
 for `agent-inbox` (an agent hook that runs `agent-inbox hook` included), and read the keys in the log
 (`agent-inbox where` prints its path). Do not propose a point again that already sends, or the hook where it
-is already in place. Use the same key names and the same notify wrapper as the points already wired. Compare
+is already in place. Use the same key names and the same notify wrapper as the points already wired; a `notify`
+call of a recorded point passes `--point <id>` with the record's id. Compare
 the records with what you found: a recorded point whose call is gone needs a `point remove`, and a call
 without a record needs a `point add` (snippet D).
 
@@ -213,10 +215,11 @@ runs as written in both.
 
 **B. Script or precheck**: one call, its result ignored. For PowerShell, a `.bat` or `.cmd` script or another
 language, and for arguments with `&`, `|`, `<`, `>`, `^` or a line break, call it as `cli.md` says under "In a
-script". A message of more than one line goes through stdin, with `-` as the message.
+script". A message of more than one line goes through stdin, with `-` as the message. `--point <id>` is the id
+of the point's record (snippet D), so each message shows which point sent it.
 
 ```sh
-~/.config/agent-inbox/bin/agent-inbox notify nightly-build "build failed: 3 tests red" "$BUILD_URL" || true
+~/.config/agent-inbox/bin/agent-inbox notify --point nightly-build nightly-build "build failed: 3 tests red" "$BUILD_URL" || true
 ```
 
 For a lasting condition, keep a marker file while it holds, and send again only after it cleared and came
@@ -232,7 +235,8 @@ When <the case>, run `~/.config/agent-inbox/bin/agent-inbox notify <KEY> "<what 
 ```
 
 **D. Record the point**: one per row, run once the row is wired, so the person sees it under Wired points.
-`<id>` is letters, digits, `.`, `_` or `-`; give the key as a placeholder such as `<ticket>` when it varies.
+`<id>` is letters, digits, `.`, `_` or `-`; give the key as a placeholder such as `<ticket>` when it varies. A
+`notify` call of the point passes the same `<id>` as `--point`, so its messages say which point sent them.
 
 ```sh
 ~/.config/agent-inbox/bin/agent-inbox point add agent-ask ask "<work>" "an agent stops for your decision, approval or help, as it judges" "~/.claude/settings.json SessionStart hook (A)"
@@ -285,7 +289,8 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 3. Check the point against the rules in section 3 ("Keep a point only if"). If it fails one, or the point
    already sends, say so and stop. If an agent with the brief would send it by its own judgment, say so: it
    needs no wiring, unless the person wants it sent every time (section 4).
-4. Choose the place and the snippet (sections 2 and 4). Show the row and the change; wait for the OK.
+4. Choose the place and the snippet (sections 2 and 4). Show the row and the change; wait for the OK. A `notify`
+   call of the point passes `--point` with the id the record will have.
 5. Make the change, then record the point with `agent-inbox point add` (snippet D).
 6. Check it: for the hook, run `agent-inbox hook` in an Orca terminal and show its first line; for a `notify`
    point, send a drill (`agent-inbox notify DRILL "drill message"`); else tell the person how to trigger the
@@ -301,7 +306,8 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 3. Check the changed point against the rules in section 3 ("Keep a point only if"). Show the old and the new
    lines; wait for the OK.
 4. Make the change, then record it again with `agent-inbox point add <the same id> ...` (snippet D): the same
-   id replaces the record. If the place moved, take the old call out.
+   id replaces the record. If the place moved, take the old call out. A `notify` call passes
+   `--point <the same id>`; an `ask` call takes none, so take it out if the kind changes.
 5. Check it as step 6 of "Add a point" says, and show the row from `agent-inbox point list`.
 
 **Remove the point `<id>`:**
@@ -309,7 +315,7 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 1. Read the point from `agent-inbox point list`. If its id starts with `builtin.`, the plugin wires it: tell the
    person to press **Remove** on it in the panel, and stop.
 2. Find its call. Look first in the place the point names ("wired in"), then in the places from section 1:
-   search for `agent-inbox` calls with its key.
+   search for `agent-inbox` calls with its key or its `--point <id>`.
 3. Show the lines you will take out; wait for the OK. Keep what other points still use: the hook of section 2
    carries an `ask` and a `notify` point, and stays while either of them is recorded.
 4. Take the lines out, then run `agent-inbox point remove <id>`.
@@ -317,33 +323,34 @@ reads it, by its absolute path: the workspace you run in may hold only a copy of
 
 ## 7. Align the points
 
-The records drift when a workflow changes by hand: a script is deleted, a prompt is rewritten, a call is added
-without `point add`. Bring the records in line with the calls. The calls are the truth; change only the
-records.
+The person runs this about every two weeks, or when a point looks out of date. Keep two things true:
+
+- every point under Wired points has a call in the workflow today;
+- every `notify` call of a point passes its id as `--point <id>`, so its messages show which point sent them.
+
+The calls are the truth for the command, the key and the place; the record's id is the identity.
 
 1. Read the records: `agent-inbox point list`.
 2. Find the calls: search for `agent-inbox` in the places from section 1 and in the place each record names
-   ("wired in"). For each call note the command (`ask` or `notify`), the key and the place. A call through a
-   notify wrapper counts at the wrapper. A hook that runs `agent-inbox hook` counts as an `ask` call and a
-   `notify` call. A key that is a variable (`"$TICKET"`) matches a record whose key is a placeholder such as
+   ("wired in"). For each call note the command (`ask` or `notify`), the key, the place and, for a `notify`, its
+   `--point <id>`. A call through a notify wrapper counts at the wrapper; when the wrapper forwards its
+   arguments, callers pass `--point` through it. A hook that runs `agent-inbox hook` counts as an `ask` call and
+   a `notify` call. A key that is a variable (`"$TICKET"`) matches a record whose key is a placeholder such as
    `<ticket>`.
-3. Read the keys sent within the retention window from the log (`agent-inbox where` prints its path). A key
-   that still sends shows a live call, also where you did not find one.
-4. Put each record and each call in one row of this table:
+3. Match each call to a record by its `--point <id>` first; a call that passes none matches by command, key and
+   place. When several records share a key and a place (the cleanup points of one script), match them by the
+   condition each sends on and the message it sends, and ask the person if it stays unclear. Then fix both sides:
 
    | Found | Fix |
    | --- | --- |
-   | A record and its call match | Nothing |
    | A record whose id starts with `builtin.` | Nothing: the plugin wires it, without a call in the workflow |
-   | A record and its call differ in command, key or place | `point add <the same id> ...` with the values of the call; the same id replaces the record |
-   | A call without a record | `point add` (snippet D), with a new id |
-   | A record without a call, and its key has not sent within the window | `point remove <id>` |
-   | A record without a call, but its key still sends | Nothing; say that the call is in a place you did not search |
+   | A record and its call match, and the call passes its id as `--point` | Nothing |
+   | A record and its call match, but the call passes no `--point` | Add `--point <the record's id>` to the call |
+   | A record and its call differ in command, key or place | `point add <the same id> ...` with the values of the call; add `--point <the same id>` to the call if it passes none |
+   | A call whose `--point <id>` has no record | `point add` (snippet D): that id, the call's kind, key and place, and a `when` that says when it sends |
+   | A call without `--point` that matches no record | The same `point add` with a new id, then add `--point <the id>` to the call |
+   | A record without a call | `point remove <id>`; say if its key still sends, from a call that is not this point or in a place you did not search |
 
-5. List the problems you see in the calls themselves, against the rules in sections 3 and 4: a script call
-   whose failure fails the job (no `|| true` or its equivalent), a message whose first line does not say it all or with more than a few lines of detail, a second
-   channel for the same event, a secret in a message, two calls for one event, a hook that sends on every
-   turn. Do not fix them; the person can fix them, or use **Add a point**, **Edit** and **Remove**.
-6. Show the table, the commands and the problems, and wait for the person's OK. If every record matches its
-   call, say so and stop.
-7. Run the commands the person agreed to, then show `agent-inbox point list`.
+4. Show the changes and the exact lines that gain or change `--point`, and wait for the person's OK. Change
+   nothing else in the workflow files.
+5. Run the commands and make the `--point` changes, then show `agent-inbox point list`.

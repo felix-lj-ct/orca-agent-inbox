@@ -9,7 +9,7 @@ import {
   Collapsible,
   EmptyState,
   env,
-  IconButton,
+  Input,
   Link,
   Markdown,
   plugin,
@@ -43,6 +43,9 @@ const failure = atom<string | null>(null)
 const shownMessages = { unread: atom(MESSAGE_PAGE), history: atom(MESSAGE_PAGE) }
 const messagesOpen = atom(true)
 const messagesTab = atom<'unread' | 'read'>('unread')
+/** The point search the Messages list shows, and the one Wired points searches; '' is every point. */
+const messagePoint = atom('')
+const pointsPoint = atom('')
 /** Wired points stay open or closed as the person left them; a run ends whenever another sidebar tab shows. */
 const pointsOpen = atom('pointsOpen', false, { persist: 'plugin' })
 /** Recommended points: open until the person closes them, then as left. */
@@ -57,12 +60,28 @@ const expanded = atom<Record<string, boolean>>({})
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const t = () => strings(read(inbox)?.language ?? 'auto', env.locale)
 
+/** The newest refresh wins: a search typed while an answer is on its way must not show the older answer. */
+let refreshSeq = 0
+
 async function refresh(): Promise<void> {
+  const seq = ++refreshSeq
   try {
-    set(inbox, await plugin.request('inbox.list', { unread: read(shownMessages.unread), read: read(shownMessages.history) }))
+    const point = read(messagePoint).trim()
+    const data = await plugin.request('inbox.list', {
+      unread: read(shownMessages.unread),
+      read: read(shownMessages.history),
+      ...(point ? { point } : {})
+    })
+    if (seq !== refreshSeq) return
+    set(inbox, data)
+    // the settings can turn the point search off: a search typed before that does not come back with it
+    if (data.showPointSearch === false) {
+      set(messagePoint, '')
+      set(pointsPoint, '')
+    }
     set(failure, null)
   } catch (e) {
-    set(failure, t().loadFailed(errorText(e)))
+    if (seq === refreshSeq) set(failure, t().loadFailed(errorText(e)))
   }
 }
 
@@ -86,8 +105,24 @@ async function act(request: Promise<ActionResult>, then?: () => Promise<void>): 
 const goTo = (w: WaitingItem) => act(plugin.request('inbox.open', { path: w.path, terminal: w.terminal }))
 const resolve = (w: WaitingItem) => act(plugin.request('inbox.resolve', { path: w.path, key: w.key }), refresh)
 const markRead = (messages: InboxMessage[]) => act(plugin.request('inbox.read', { ids: messages.map((m) => m.id) }), refresh)
-/** Every unread message up to the newest shown, those behind Show more too. */
-const markAllRead = (newest: InboxMessage) => act(plugin.request('inbox.readAll', { through: newest.at }), refresh)
+/** Every unread message up to the newest shown, those behind Show more too, inside the Messages search. */
+const markAllRead = (newest: InboxMessage) => {
+  const point = read(messagePoint).trim()
+  return act(plugin.request('inbox.readAll', { through: newest.at, ...(point ? { point } : {}) }), refresh)
+}
+
+let filterTimer: ReturnType<typeof setTimeout> | undefined
+
+/** Types the Messages search; the worker filters after a pause, so typing a word costs one request. */
+function filterMessages(value: string): void {
+  set(messagePoint, value)
+  clearTimeout(filterTimer)
+  filterTimer = setTimeout(() => {
+    set(shownMessages.unread, MESSAGE_PAGE)
+    set(shownMessages.history, MESSAGE_PAGE)
+    void refresh()
+  }, 250)
+}
 /** Whether the link opened: Orca refuses one that is not http, https or mailto, and the person may cancel its prompt. */
 async function openLink(url: string): Promise<boolean> {
   try {
@@ -160,6 +195,7 @@ export function setup(ctx: PanelContext): void {
   ctx.signal.addEventListener('abort', () => {
     clearInterval(timer)
     clearTimeout(pending)
+    clearTimeout(filterTimer)
   })
 }
 
@@ -171,7 +207,7 @@ export function setup(ctx: PanelContext): void {
 function waitingItem(w: WaitingItem) {
   const s = t()
   return (
-    <Box border="neutral" radius="md" paddingX="md" paddingY="sm" gap="sm">
+    <Box key={`ask:${w.path}`} border="neutral" radius="md" paddingX="md" paddingY="sm" gap="sm">
       <Row justify="between" align="start" gap="sm">
         <Text size="sm" weight="semibold">
           {w.key}
@@ -214,15 +250,15 @@ function projectGroup(group: { repo: string; items: WaitingItem[] }) {
 }
 
 /**
- * The key, then the message as Markdown. Unread: the key in bold, Open link filled and a Mark read button; read:
- * the key muted. Open link sits on
+ * One message as a bordered tile, like an ask: its key, the message as Markdown, then the time and actions.
+ * Unread: the key in bold, Open link filled and a Mark read button; read: the key muted. Open link sits on
  * the right with Mark read, not after the time: Orca opens a link only from a control that has not moved since
  * it last looked, and the time changes width as it counts, every second in the first minute.
  */
 function messageRow(m: InboxMessage) {
   const s = t()
   return (
-    <Stack gap="xs">
+    <Box key={`message:${m.id}`} border="neutral" radius="md" paddingX="md" paddingY="sm" gap="sm">
       <Text size="sm" weight={m.read ? undefined : 'semibold'} muted={m.read}>
         {m.key}
       </Text>
@@ -230,6 +266,7 @@ function messageRow(m: InboxMessage) {
       <Row justify="between" align="center" gap="sm">
         <Text muted size="xs">
           <RelativeTime at={m.at} />
+          {m.point !== null && ` · ${s.messagePoint(m.point)}`}
         </Text>
         <Row gap="sm" align="center">
           {m.url !== null && (
@@ -250,7 +287,7 @@ function messageRow(m: InboxMessage) {
           )}
         </Row>
       </Row>
-    </Stack>
+    </Box>
   )
 }
 
@@ -263,7 +300,7 @@ function messageList(messages: InboxMessage[], total: number, list: keyof typeof
     return refresh()
   }
   return (
-    <Stack gap="md">
+    <Stack gap="sm">
       {messages.map(messageRow)}
       {rest > 0 && (
         <Button size="sm" variant="ghost" onPress={showMore}>
@@ -335,6 +372,20 @@ function messagesSection(data: Inbox) {
           </Button>
         )}
       </Row>
+      {data.showPointSearch && (
+        <Row gap="sm" align="center">
+          <Box grow minWidth={0}>
+            <Input
+              label={s.filterMessages}
+              labelHidden
+              type="search"
+              placeholder={s.filterMessagesPlaceholder}
+              value={read(messagePoint)}
+              onChange={filterMessages}
+            />
+          </Box>
+        </Row>
+      )}
       {tab === 'unread'
         ? unread.length === 0
           ? empty(s.noUnread)
@@ -347,18 +398,20 @@ function messagesSection(data: Inbox) {
 }
 
 /**
- * Where the point shows as a badge, then when it sends; under it the key, the place that sends, Edit and Remove. A
- * recommended point shows in the panel's language, has no Edit, since the plugin wires it as it is, and Remove
- * takes it out at once; the others an agent changes or takes out of the workflow.
+ * One point as a bordered tile, like an ask and a message: where it shows as a badge, then when it sends; under it
+ * the key, the place that sends, Edit and Remove. A recommended point shows in the panel's language, has no Edit,
+ * since the plugin wires it as it is, and Remove takes it out at once; the others an agent changes or takes out of
+ * the workflow.
  */
 function pointRow(p: WiredPoint, guide: string) {
   const s = t()
   const own = recommended(p.id) !== undefined
   const shown = { ...p, ...(own ? s.recommendedPoints[p.id] : undefined) }
   return (
-    <Stack gap="xs">
+    <Box key={`point:${p.id}`} border="neutral" radius="md" paddingX="md" paddingY="sm" gap="sm">
       <Row gap="sm" align="center">
         <Badge tone={p.kind === 'ask' ? 'accent' : 'neutral'}>{s.pointKind(p.kind)}</Badge>
+        <Badge tone="neutral">{shown.id}</Badge>
         <Text size="sm">{shown.when}</Text>
       </Row>
       <Row justify="between" align="center" gap="sm">
@@ -384,7 +437,7 @@ function pointRow(p: WiredPoint, guide: string) {
           </Button>
         </Box>
       </Row>
-    </Stack>
+    </Box>
   )
 }
 
@@ -392,11 +445,16 @@ function pointRow(p: WiredPoint, guide: string) {
  * What can write here, as the CLI recorded it: asks first, in the order they were recorded, under Add a point
  * and Align. Every action hands the change to an agent with a prompt. Closed until opened, then as left.
  */
-function pointsSection(points: WiredPoint[], guide: string) {
+function pointsSection(points: WiredPoint[], guide: string, showSearch: boolean) {
   const s = t()
   const ordered = [...points.filter((p) => p.kind === 'ask'), ...points.filter((p) => p.kind === 'notify')]
+  const query = showSearch ? read(pointsPoint).trim().toLowerCase() : ''
+  const shown =
+    query === ''
+      ? ordered
+      : ordered.filter((p) => [p.id, p.when, p.wiredIn, p.key].some((text) => text.toLowerCase().includes(query)))
   return notedSection(
-    s.points(points.length),
+    s.points(shown.length),
     s.pointsDescription,
     read(pointsOpen),
     (open) => set(pointsOpen, open),
@@ -409,12 +467,30 @@ function pointsSection(points: WiredPoint[], guide: string) {
           {s.alignPoints}
         </Button>
       </Row>
+      {showSearch && points.length > 1 && (
+        <Row gap="sm" align="center">
+          <Box grow minWidth={0}>
+            <Input
+              label={s.filterPoints}
+              labelHidden
+              type="search"
+              placeholder={s.filterPointsPlaceholder}
+              value={read(pointsPoint)}
+              onChange={(value) => set(pointsPoint, value)}
+            />
+          </Box>
+        </Row>
+      )}
       {points.length === 0 ? (
         <Text muted size="sm">
           {s.noPoints}
         </Text>
+      ) : shown.length === 0 ? (
+        <Text muted size="sm">
+          {s.noMatchingPoints}
+        </Text>
       ) : (
-        ordered.map((p) => pointRow(p, guide))
+        <Stack gap="sm">{shown.map((p) => pointRow(p, guide))}</Stack>
       )}
     </>
   )
@@ -530,9 +606,6 @@ function inboxView(data: Inbox, error: string | null) {
   const s = t()
   return (
     <Stack gap="md">
-      <Row justify="end">
-        <IconButton icon="refresh" label={s.refresh} size="sm" variant="ghost" onPress={() => void refresh()} />
-      </Row>
       {error !== null && <Callout tone="danger">{error}</Callout>}
       {data.error !== null && (
         <Callout tone="danger" title={s.problem}>
@@ -552,7 +625,7 @@ function inboxView(data: Inbox, error: string | null) {
       <Separator />
       {messagesSection(data)}
       <Separator />
-      {pointsSection(data.points, data.setup.guide)}
+      {pointsSection(data.points, data.setup.guide, data.showPointSearch)}
       {data.showRecommendations && <Separator />}
       {data.showRecommendations && recommendedSection(data.points)}
     </Stack>
